@@ -319,7 +319,17 @@ function createFlipper(side='left') {
 
   const restAngle = isLeft ? -0.45 : 0.45;
   const upAngle = isLeft ? 1.05 : -1.05;
-  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: isLeft ? 8 : -8, downSpeed: isLeft ? -4 : 4 };
+  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: Math.abs(isLeft ? 8 : -8), downSpeed: Math.abs(isLeft ? 4 : 4) };
+
+  // configure hinge limits and motor force so it can't spin freely
+  try {
+    if (typeof hinge.setLimits === 'function') {
+      hinge.setLimits(restAngle, upAngle, 0.9, 0.3);
+    }
+    if (typeof hinge.motorMaxForce !== 'undefined') {
+      hinge.motorMaxForce = 1e5;
+    }
+  } catch (err) { console.warn('hinge limits setup failed', err); }
 
   // small extra impulse on collide when engaged
   body.addEventListener && body.addEventListener('collide', (e) => {
@@ -365,13 +375,25 @@ function setFlipper(side, engaged) {
   if (!f) return;
   f.engaged = engaged;
   try {
-    if (f.hinge && f.hinge.enableMotor) {
-      if (engaged) { f.hinge.enableMotor(); f.hinge.setMotorSpeed(f.upSpeed); }
-      else { f.hinge.setMotorSpeed(f.downSpeed); }
+    if (f.hinge && typeof f.hinge.setMotorSpeed === 'function') {
+      // determine target angle
+      const target = engaged ? f.upAngle : f.restAngle;
+      // try to read current hinge angle
+      let cur = 0;
+      try { if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle(); } catch (e) { /* ignore */ }
+      const delta = target - cur;
+      // if we're already close, stop motor
+      if (Math.abs(delta) < 0.02) {
+        try { f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+        return;
+      }
+      const speedAbs = engaged ? f.upSpeed : f.downSpeed;
+      const speed = Math.sign(delta) * Math.abs(speedAbs);
+      try { f.hinge.enableMotor(); f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
     } else {
       // fallback: nudge kinematic-style if hinge API missing
       if (engaged) f.body.angularVelocity.set(0, f.upSpeed, 0);
-      else f.body.angularVelocity.set(0, f.downSpeed, 0);
+      else f.body.angularVelocity.set(0, -f.downSpeed, 0);
     }
   } catch (err) { console.warn('setFlipper hinge error', err); }
 }
