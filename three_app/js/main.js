@@ -304,20 +304,33 @@ function createFlipper(side='left') {
   body.material = bumperMaterial;
   world.addBody(body);
 
-  // static pivot
+  // static pivot body placed at the flipper hinge point (inner end)
   const pivot = new CANNON.Body({ mass: 0 });
-  pivot.position.set(x, y, z);
+  // compute pivot world position at inner end of the flipper (toward center)
+  const pivotOffsetLocal = new CANNON.Vec3(isLeft ? (length/2) : (-length/2), 0, 0);
+  // pivot world position = body position + pivotOffsetLocal rotated by body quaternion (body unrotated at start so direct add is fine)
+  pivot.position.set(x + pivotOffsetLocal.x, y + pivotOffsetLocal.y, z + pivotOffsetLocal.z);
   world.addBody(pivot);
 
   // hinge around Y axis
   const axis = new CANNON.Vec3(0,1,0);
-  const hinge = new CANNON.HingeConstraint(pivot, body, { pivotA: new CANNON.Vec3(0,0,0), axisA: axis, pivotB: new CANNON.Vec3(0,0,0), axisB: axis, maxForce: 1e6 });
+  // pivotA at pivot center, pivotB expressed in body local coordinates
+  const hinge = new CANNON.HingeConstraint(pivot, body, {
+    pivotA: new CANNON.Vec3(0,0,0), axisA: axis,
+    pivotB: pivotOffsetLocal, axisB: axis,
+    maxForce: 1e6
+  });
   world.addConstraint(hinge);
-  try { 
-    // do NOT enable motor at creation (avoid uncontrolled spinning). Set a safe motor max force.
-    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e4;
-    // ensure motor speed is zero if API present
+  try {
+    // keep motor off initially and set safe max force
+    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 5e4;
     hinge.setMotorSpeed && hinge.setMotorSpeed(0);
+    // set rotation limits (radians)
+    if (typeof hinge.setLimits === 'function') {
+      const lower = isLeft ? restAngle : -upAngle; // ensure correct orientation
+      const upper = isLeft ? upAngle : -restAngle;
+      hinge.setLimits(lower, upper, 0.9, 0.3);
+    }
   } catch (e) { console.debug('hinge motor API may differ', e); }
 
   mesh.position.set(x, y + 0.01, z);
@@ -668,15 +681,24 @@ function animate(time) {
     // update flipper visuals from physics bodies (hinge+motor handles motion)
     for (const f of flippers) {
       try {
-        // ensure motor target speed when engaged/disengaged (keeps moving toward position)
-        if (f.hinge && f.hinge.setMotorSpeed) {
-          // nothing here; setFlipper already adjusts motor speed on input
-        }
         // sync mesh to body
         if (f.mesh && f.body) {
           f.mesh.position.copy(f.body.position);
           f.mesh.quaternion.copy(f.body.quaternion);
         }
+
+        // if hinge present, check angle and stop motor when target reached
+        if (f.hinge && typeof f.hinge.getAngle === 'function') {
+          const ang = f.hinge.getAngle();
+          const target = f.engaged ? f.upAngle : f.restAngle;
+          const diff = Math.abs(ang - target);
+          if (diff < 0.025) {
+            // close enough: stop motor
+            try { f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+            f.body.angularVelocity.set(0,0,0);
+          }
+        }
+
       } catch (err) { console.warn('flipper sync error', err); }
     }
 
