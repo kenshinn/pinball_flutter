@@ -322,7 +322,39 @@ function createFlipper(side='left') {
   // larger travel angle and faster angular speed for a stronger flip
   const restAngle = isLeft ? -0.45 : 0.45; // slightly more open at rest
   const upAngle = isLeft ? 1.05 : -1.05; // ~60 degrees
-  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12 };
+  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 18 };
+
+  // when the flipper collides with a ball while moving, add an impulse to the ball along contact normal
+  body.addEventListener('collide', (e) => {
+    try {
+      if (e.body && e.body._isBall) {
+        // only give extra kick when flipper is moving toward the ball (engaging)
+        const movingUp = state.targetAngle > state.angle;
+        if (!movingUp) return;
+        // compute impulse magnitude from angular speed and angle delta
+        const angleDelta = Math.abs(state.targetAngle - state.angle);
+        const base = Math.min(Math.max(state.angularSpeed * angleDelta * 0.6, 2), 40);
+        // contact normal (world) - note: contact normal points from body i to body j
+        const contact = e.contact || null;
+        let nx = 0, ny = 1, nz = 0;
+        if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
+        // apply impulse opposite to contact normal (so it pushes the ball away)
+        const imp = new CANNON.Vec3(-nx * base, -ny * base * 0.8, -nz * base);
+        // apply at the ball's position
+        if (e.body.applyImpulse) {
+          e.body.applyImpulse(imp, e.body.position);
+        } else if (e.body.applyForce) {
+          // fallback
+          e.body.applyForce(imp, e.body.position);
+        }
+        // small sound feedback scaled by kick
+        playPing(300 + Math.min(base*20, 1200), 0.04);
+      }
+    } catch (err) {
+      console.warn('flipper collide handler error', err);
+    }
+  });
+
   flippers.push(state);
 }
 
