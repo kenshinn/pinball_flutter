@@ -279,10 +279,11 @@ function spawnAtCenter() {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Flippers implemented with hinge + motor
+// Flippers (kinematic bodies animated) — simple, stable model (restoring A)
 const flippers = [];
 function createFlipper(side='left') {
   const isLeft = side === 'left';
+  // flipper geometry: length (x), height (vertical), thickness (z)
   const length = 2.6;
   const thickness = 0.2;
   const height = 0.48;
@@ -296,76 +297,43 @@ function createFlipper(side='left') {
   mesh.position.set(x, y, z);
   scene.add(mesh);
 
-  // dynamic body so motor can move it
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
-  const body = new CANNON.Body({ mass: 1 });
-  body.addShape(shape);
-  body.position.set(x, y, z);
+  // We'll make the body origin sit at the hinge pivot (inner end) so rotation is around that point.
+  const pivotX = x + (isLeft ? (length/2) : (-length/2));
+  const body = new CANNON.Body({ mass: 0 });
+  // shape offset so the box extends outward from the pivot
+  const shapeOffset = new CANNON.Vec3(isLeft ? -length/2 : length/2, 0, 0);
+  body.addShape(shape, shapeOffset);
+  // kinematic body: we update quaternion directly in the animation loop
+  body.type = CANNON.Body.KINEMATIC;
+  body.position.set(pivotX, y, z);
   body.material = bumperMaterial;
   world.addBody(body);
 
-  // static pivot body placed at the flipper hinge point (inner end)
-  const pivot = new CANNON.Body({ mass: 0 });
-  // compute pivot world position at inner end of the flipper (toward center)
-  const pivotOffsetLocal = new CANNON.Vec3(isLeft ? (length/2) : (-length/2), 0, 0);
-  // pivot world position = body position + pivotOffsetLocal rotated by body quaternion (body unrotated at start so direct add is fine)
-  pivot.position.set(x + pivotOffsetLocal.x, y + pivotOffsetLocal.y, z + pivotOffsetLocal.z);
-  world.addBody(pivot);
+  // position mesh initially at the flipper center (pivot + rotated offset)
+  const meshPosX = pivotX + shapeOffset.x;
+  mesh.position.set(meshPosX, y + 0.01, z);
+  mesh.scale.set(1,1,1);
 
-  // define flipper angles before creating hinge limits
   const restAngle = isLeft ? -0.45 : 0.45;
   const upAngle = isLeft ? 1.05 : -1.05;
+  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12, shapeOffset };
 
-  // hinge around Y axis
-  const axis = new CANNON.Vec3(0,1,0);
-  // pivotA at pivot center, pivotB expressed in body local coordinates
-  const hinge = new CANNON.HingeConstraint(pivot, body, {
-    pivotA: new CANNON.Vec3(0,0,0), axisA: axis,
-    pivotB: pivotOffsetLocal, axisB: axis,
-    maxForce: 1e6
-  });
-  world.addConstraint(hinge);
-  try {
-    // keep motor off initially and set safe max force
-    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 5e4;
-    hinge.setMotorSpeed && hinge.setMotorSpeed(0);
-    // set rotation limits (radians)
-    if (typeof hinge.setLimits === 'function') {
-      const lower = Math.min(restAngle, upAngle);
-      const upper = Math.max(restAngle, upAngle);
-      hinge.setLimits(lower, upper, 0.9, 0.3);
-    }
-  } catch (e) { console.debug('hinge motor API may differ', e); }
-
-  mesh.position.set(x, y + 0.01, z);
-
-  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: Math.abs(isLeft ? 8 : 8), downSpeed: Math.abs(isLeft ? 4 : 4) };
-  // add angular damping to slow uncontrolled rotation
-  body.angularDamping = 0.8;
-
-  // configure hinge limits and motor force so it can't spin freely
-  try {
-    if (typeof hinge.setLimits === 'function') {
-      hinge.setLimits(restAngle, upAngle, 0.9, 0.3);
-    }
-    if (typeof hinge.motorMaxForce !== 'undefined') {
-      hinge.motorMaxForce = 1e5;
-    }
-  } catch (err) { console.warn('hinge limits setup failed', err); }
-
-  // small extra impulse on collide when engaged
+  // gentle collision assist when moving up
   body.addEventListener && body.addEventListener('collide', (e) => {
     try {
-      if (e.body && e.body._isBall && state.engaged) {
+      if (e.body && e.body._isBall) {
+        const movingUp = state.targetAngle > state.angle;
+        if (!movingUp) return;
         const contact = e.contact || null;
         let nx=0, ny=1, nz=0;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
-        const base = 6;
-        const imp = new CANNON.Vec3(-nx*base, -ny*base*0.6, -nz*base);
+        const base = 4;
+        const imp = new CANNON.Vec3(-nx*base, -ny*base*0.5, -nz*base);
         if (e.body.applyImpulse) e.body.applyImpulse(imp, e.body.position);
-        playPing(400, 0.04);
+        playPing(360, 0.04);
       }
-    } catch (err) { console.warn('flipper collision helper error', err); }
+    } catch (err) { console.warn('flipper collide helper error', err); }
   });
 
   flippers.push(state);
@@ -387,49 +355,12 @@ createFlipper('right');
   addWall({ x: -guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
   // right guard
   addWall({ x: guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
-  // also add taller visual side walls closer to the flippers to prevent lateral drains
-  addWall({ x: -tableSize.w/2 + 0.2, y: 1.2, z: tableSize.h/2 - 2.0 }, { x: 0, y: 0, z: 0 }, { x: 0.4, y: 2.4, z: 2.8 }, { color: 0x222222 });
-  addWall({ x: tableSize.w/2 - 0.2, y: 1.2, z: tableSize.h/2 - 2.0 }, { x: 0, y: 0, z: 0 }, { x: 0.4, y: 2.4, z: 2.8 }, { color: 0x222222 });
 })();
 
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
-  f.engaged = engaged;
-  try {
-    if (f.hinge && typeof f.hinge.setMotorSpeed === 'function') {
-      // determine target angle
-      const target = engaged ? f.upAngle : f.restAngle;
-      // try to read current hinge angle; fallback to body quaternion->euler Y
-      let cur = 0;
-      try {
-        if (typeof f.hinge.getAngle === 'function') {
-          cur = f.hinge.getAngle();
-        } else if (f.body && f.body.quaternion) {
-          const q = f.body.quaternion;
-          const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-          const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
-          cur = e.y || 0;
-        }
-      } catch (e) { /* ignore */ }
-      // normalize delta to [-PI,PI]
-      let delta = target - cur;
-      while (delta > Math.PI) delta -= Math.PI*2;
-      while (delta < -Math.PI) delta += Math.PI*2;
-      // if we're already close, stop motor
-      if (Math.abs(delta) < 0.02) {
-        try { f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
-        return;
-      }
-      const speedAbs = engaged ? f.upSpeed : f.downSpeed;
-      const speed = Math.sign(delta) * Math.abs(speedAbs);
-      try { f.hinge.enableMotor(); f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
-    } else {
-      // fallback: nudge kinematic-style if hinge API missing
-      if (engaged) f.body.angularVelocity.set(0, f.upSpeed, 0);
-      else f.body.angularVelocity.set(0, -f.downSpeed, 0);
-    }
-  } catch (err) { console.warn('setFlipper hinge error', err); }
+  f.targetAngle = engaged ? f.upAngle : f.restAngle;
 }
 
 // Controls: keyboard and touch UI
@@ -682,10 +613,43 @@ function animate(time) {
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
 
-    // update flipper visuals from physics bodies (hinge+motor handles motion)
+    // update flipper visuals from physics bodies (or animate kinematic flippers)
     for (const f of flippers) {
       try {
-        // sync mesh to body
+        // if this is a kinematic flipper (shapeOffset present), animate toward targetAngle and set body quaternion/mesh
+        if (f.shapeOffset) {
+          const cur = f.angle;
+          const target = f.targetAngle;
+          const maxMove = f.angularSpeed * dt;
+          const diff = target - cur;
+          if (Math.abs(diff) <= maxMove) {
+            f.angle = target;
+          } else {
+            f.angle = cur + Math.sign(diff) * maxMove;
+          }
+          // set body quaternion around Y axis
+          try {
+            f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), f.angle);
+          } catch (e) {
+            // some builds expose setFromAxisAngle on prototype differently; fallback to THREE
+            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), f.angle);
+            f.body.quaternion.set(tq.x, tq.y, tq.z, tq.w);
+          }
+          // compute mesh world position = body.position + rotated shapeOffset
+          let rotated = null;
+          try {
+            rotated = f.body.quaternion.vmult(f.shapeOffset);
+            f.mesh.position.set(f.body.position.x + rotated.x, f.body.position.y + rotated.y + 0.01, f.body.position.z + rotated.z);
+            f.mesh.quaternion.set(f.body.quaternion.x, f.body.quaternion.y, f.body.quaternion.z, f.body.quaternion.w);
+          } catch (e) {
+            // fallback: set mesh to body position
+            f.mesh.position.copy(f.body.position);
+            f.mesh.quaternion.copy(f.body.quaternion);
+          }
+          continue;
+        }
+
+        // sync mesh to body for dynamic/hinged flippers
         if (f.mesh && f.body) {
           f.mesh.position.copy(f.body.position);
           f.mesh.quaternion.copy(f.body.quaternion);
