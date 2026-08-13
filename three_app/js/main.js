@@ -634,49 +634,47 @@ function animate(time) {
 
   if (lastTime !== undefined) {
     const dt = Math.min((time - lastTime) / 1000, 0.05);
-    // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
-    world.step(timeStep, dt, 10);
 
-    // update flipper visuals from physics bodies (or animate kinematic flippers)
+    // --- Update kinematic flippers BEFORE stepping physics so collisions use correct motion ---
     for (const f of flippers) {
       try {
-        // if this is a kinematic flipper (shapeOffset present), animate toward targetAngle and set body quaternion/mesh
         if (f.shapeOffset) {
           const cur = f.angle;
           const target = f.targetAngle;
           const maxMove = f.angularSpeed * dt;
           const diff = target - cur;
-          let newAngle;
-          if (Math.abs(diff) <= maxMove) {
-            newAngle = target;
-          } else {
-            newAngle = cur + Math.sign(diff) * maxMove;
-          }
-          // compute angular velocity (rad/s) and store for collision impulse calculation
-          if (dt > 0) {
-            f.angularVel = (newAngle - (typeof f.prevAngle === 'number' ? f.prevAngle : cur)) / dt;
-          } else {
-            f.angularVel = 0;
-          }
-          f.prevAngle = newAngle;
+          const newAngle = Math.abs(diff) <= maxMove ? target : cur + Math.sign(diff) * maxMove;
+          const angVel = dt > 0 ? (newAngle - cur) / dt : 0;
+          // store
+          f.prevAngle = cur;
           f.angle = newAngle;
-
-          // set body quaternion around Y axis
+          f.angularVel = angVel;
+          // set body quaternion and angular velocity so the physics step sees the motion
           try {
             f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), f.angle);
           } catch (e) {
-            // some builds expose setFromAxisAngle on prototype differently; fallback to THREE
             const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), f.angle);
             f.body.quaternion.set(tq.x, tq.y, tq.z, tq.w);
           }
-          // compute mesh world position = body.position + rotated shapeOffset
+          f.body.angularVelocity.set(0, angVel, 0);
+        }
+      } catch (err) { console.warn('pre-step flipper update error', err); }
+    }
+
+    // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
+    world.step(timeStep, dt, 10);
+
+    // update flipper visuals from physics bodies (or sync kinematic meshes)
+    for (const f of flippers) {
+      try {
+        if (f.shapeOffset) {
+          // after physics step, position mesh according to body quaternion
           let rotated = null;
           try {
             rotated = f.body.quaternion.vmult(f.shapeOffset);
             f.mesh.position.set(f.body.position.x + rotated.x, f.body.position.y + rotated.y + 0.01, f.body.position.z + rotated.z);
             f.mesh.quaternion.set(f.body.quaternion.x, f.body.quaternion.y, f.body.quaternion.z, f.body.quaternion.w);
           } catch (e) {
-            // fallback: set mesh to body position
             f.mesh.position.copy(f.body.position);
             f.mesh.quaternion.copy(f.body.quaternion);
           }
