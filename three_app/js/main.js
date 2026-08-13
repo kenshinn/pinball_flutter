@@ -313,7 +313,12 @@ function createFlipper(side='left') {
   const axis = new CANNON.Vec3(0,1,0);
   const hinge = new CANNON.HingeConstraint(pivot, body, { pivotA: new CANNON.Vec3(0,0,0), axisA: axis, pivotB: new CANNON.Vec3(0,0,0), axisB: axis, maxForce: 1e6 });
   world.addConstraint(hinge);
-  try { hinge.enableMotor(); hinge.setMotorSpeed(0); hinge.motorMaxForce = 1e4; } catch (e) { console.debug('hinge motor API may differ', e); }
+  try { 
+    // do NOT enable motor at creation (avoid uncontrolled spinning). Set a safe motor max force.
+    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e4;
+    // ensure motor speed is zero if API present
+    hinge.setMotorSpeed && hinge.setMotorSpeed(0);
+  } catch (e) { console.debug('hinge motor API may differ', e); }
 
   mesh.position.set(x, y + 0.01, z);
 
@@ -378,10 +383,22 @@ function setFlipper(side, engaged) {
     if (f.hinge && typeof f.hinge.setMotorSpeed === 'function') {
       // determine target angle
       const target = engaged ? f.upAngle : f.restAngle;
-      // try to read current hinge angle
+      // try to read current hinge angle; fallback to body quaternion->euler Y
       let cur = 0;
-      try { if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle(); } catch (e) { /* ignore */ }
-      const delta = target - cur;
+      try {
+        if (typeof f.hinge.getAngle === 'function') {
+          cur = f.hinge.getAngle();
+        } else if (f.body && f.body.quaternion) {
+          const q = f.body.quaternion;
+          const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+          const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
+          cur = e.y || 0;
+        }
+      } catch (e) { /* ignore */ }
+      // normalize delta to [-PI,PI]
+      let delta = target - cur;
+      while (delta > Math.PI) delta -= Math.PI*2;
+      while (delta < -Math.PI) delta += Math.PI*2;
       // if we're already close, stop motor
       if (Math.abs(delta) < 0.02) {
         try { f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
