@@ -298,11 +298,12 @@ function createFlipper(side='left') {
   scene.add(mesh);
 
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
-  // We'll make the body origin sit at the hinge pivot (inner end) so rotation is around that point.
-  const pivotX = x + (isLeft ? (length/2) : (-length/2));
+  // We'll make the body origin sit at the hinge pivot. User requested pivot on the opposite end — flip signs.
+  // Move pivot to the other side of the flipper compared to previous behavior.
+  const pivotX = x + (isLeft ? (-length/2) : (length/2));
   const body = new CANNON.Body({ mass: 0 });
-  // shape offset so the box extends outward from the pivot
-  const shapeOffset = new CANNON.Vec3(isLeft ? -length/2 : length/2, 0, 0);
+  // shape offset so the box extends outward from the pivot (flipped)
+  const shapeOffset = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
   body.addShape(shape, shapeOffset);
   // kinematic body: we update quaternion directly in the animation loop
   body.type = CANNON.Body.KINEMATIC;
