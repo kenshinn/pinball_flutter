@@ -351,7 +351,14 @@ if (spawnBtn) spawnBtn.addEventListener('click', ()=> spawnAtCenter());
 const clearBtn = document.getElementById('clear');
 if (clearBtn) clearBtn.addEventListener('click', ()=> clearBalls());
 const orbitToggle = document.getElementById('orbit');
-if (orbitToggle) orbitToggle.addEventListener('change', (e)=> { controls.enabled = orbitToggle.checked; });
+if (orbitToggle) orbitToggle.addEventListener('change', (e)=> { 
+  controls.enabled = orbitToggle.checked;
+  // when orbiting disabled by user, also stop visual table tilt to avoid unexpected rotation
+  visualsTiltEnabled = orbitToggle.checked;
+  if (!visualsTiltEnabled) {
+    tableGroup.rotation.set(0,0,0);
+  }
+});
 
 // Device orientation -> gravity
 function handleOrientation(event) {
@@ -366,7 +373,7 @@ function handleOrientation(event) {
   try { updateMotionStatus(`β:${beta.toFixed(1)}° γ:${gamma.toFixed(1)}°`); } catch (e) {}
 
   // visually tilt the table to match device orientation (scaled down so it's pleasant)
-  if (typeof tableGroup !== 'undefined') {
+  if (visualsTiltEnabled && typeof tableGroup !== 'undefined') {
     const betaRad = THREE.MathUtils.degToRad(beta);
     const gammaRad = THREE.MathUtils.degToRad(gamma);
     // apply a damping factor so visuals don't exactly match physics but give user a sense of tilt
@@ -382,6 +389,7 @@ const motionDiagEl = document.getElementById('motion-diagnostics');
 let lastMotionTs = 0;
 let simulateTilt = false;
 let simulateTick = 0;
+let visualsTiltEnabled = true; // when false, visuals won't rotate — keeps visuals aligned with physics
 
 function updateMotionStatus(text) {
   try { if (motionStatusEl) motionStatusEl.textContent = `Motion: ${text}`; } catch (e) {}
@@ -534,6 +542,13 @@ function clampVec3(v, maxLen) {
 
 function animate(time) {
   requestAnimationFrame(animate);
+  if (simulateTilt && visualsTiltEnabled) {
+    simulateTick += 1;
+    const s = Math.sin(simulateTick * 0.05);
+    tableGroup.rotation.x = -0.2 * s;
+    tableGroup.rotation.z = -0.15 * Math.cos(simulateTick * 0.04);
+  }
+
   if (lastTime !== undefined) {
     const dt = Math.min((time - lastTime) / 1000, 0.05);
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
