@@ -352,9 +352,13 @@ function createFlipper(side='left') {
         if (rel <= 0) return; // not moving into the ball
 
         const mass = ball.mass || 1;
-        const impulseMag = mass * rel * 1.5; // tuning factor
-        const imp = new CANNON.Vec3(nx * impulseMag, ny * impulseMag, nz * impulseMag);
+        // stronger strike impulse tuned for upward lift; scale with angular velocity too
+        const speedFactor = Math.max(1.0, Math.abs(angVel) * 0.8);
+        const impulseMag = mass * rel * 2.2 * speedFactor; // increased tuning factor
+        const imp = new CANNON.Vec3(nx * impulseMag, ny * impulseMag + Math.abs(angVel) * mass * 0.6, nz * impulseMag);
         if (ball.applyImpulse) ball.applyImpulse(imp, ball.position);
+        // small velocity nudge upward to reduce chance of passing through
+        try { ball.velocity.y += Math.abs(angVel) * 0.8; } catch (e) {}
         playPing(420 + Math.random()*120, 0.04);
       }
     } catch (err) { console.warn('flipper collide helper error', err); }
