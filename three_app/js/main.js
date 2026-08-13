@@ -378,10 +378,23 @@ function handleOrientation(event) {
 }
 
 const motionStatusEl = document.getElementById('motion-status');
+const motionDiagEl = document.getElementById('motion-diagnostics');
 let lastMotionTs = 0;
+let simulateTilt = false;
+let simulateTick = 0;
 
 function updateMotionStatus(text) {
   try { if (motionStatusEl) motionStatusEl.textContent = `Motion: ${text}`; } catch (e) {}
+}
+function updateDiagnostics(text) {
+  try { if (motionDiagEl) motionDiagEl.textContent = `diag: ${text}`; } catch (e) {}
+}
+function detectMotionAPIs() {
+  const hasDO = typeof DeviceOrientationEvent !== 'undefined';
+  const hasDM = typeof DeviceMotionEvent !== 'undefined';
+  const reqDO = hasDO && typeof DeviceOrientationEvent.requestPermission === 'function';
+  const reqDM = hasDM && typeof DeviceMotionEvent.requestPermission === 'function';
+  return `DO:${hasDO}? req:${!!reqDO} | DM:${hasDM}? req:${!!reqDM}`;
 }
 
 async function enableMotionIfNeeded() {
@@ -428,6 +441,7 @@ async function enableMotionIfNeeded() {
     // also listen to devicemotion as an alternate
     window.addEventListener('devicemotion', handleMotion);
     updateMotionStatus('listener attached');
+    updateDiagnostics(detectMotionAPIs());
     console.debug('DeviceOrientation listener attached without explicit permission.');
   }
 }
@@ -453,6 +467,7 @@ function handleMotion(event) {
   const gz = ay * scale;
   world.gravity.set(gx, -9.82, gz);
 
+  updateDiagnostics(detectMotionAPIs() + ` | a:${ax.toFixed(2)},${ay.toFixed(2)},${az.toFixed(2)}`);
   console.debug('DeviceMotion derived gravity', { ax, ay, az, gx, gz });
 }
 
@@ -460,6 +475,10 @@ function handleMotion(event) {
 const enableBtn = document.getElementById('enable-motion');
 if (enableBtn) {
   enableBtn.addEventListener('click', (e) => { enableMotionIfNeeded().catch(err=>console.warn(err)); });
+}
+const simBtn = document.getElementById('simulate-tilt');
+if (simBtn) {
+  simBtn.addEventListener('click', ()=>{ simulateTilt = !simulateTilt; updateMotionStatus(simulateTilt ? 'simulating tilt' : 'simulation off'); });
 }
 
 // Try to enable on any user interaction (some browsers require a user gesture for permission popups)
