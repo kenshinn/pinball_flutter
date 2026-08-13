@@ -354,16 +354,26 @@ function handleOrientation(event) {
   world.gravity.set(gx, -9.82, gz);
 }
 
+const motionStatusEl = document.getElementById('motion-status');
+let lastMotionTs = 0;
+
+function updateMotionStatus(text) {
+  try { if (motionStatusEl) motionStatusEl.textContent = `Motion: ${text}`; } catch (e) {}
+}
+
 async function enableMotionIfNeeded() {
+  updateMotionStatus('requesting...');
   // On iOS Safari the permission API is on DeviceOrientationEvent.requestPermission
   try {
     if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
       const res = await DeviceOrientationEvent.requestPermission();
       if (res === 'granted') {
         window.addEventListener('deviceorientation', handleOrientation);
+        updateMotionStatus('enabled (DeviceOrientationEvent granted)');
         console.debug('DeviceOrientation permission granted (DeviceOrientationEvent).');
         return;
       } else {
+        updateMotionStatus('denied');
         console.warn('DeviceOrientation permission not granted:', res);
       }
     }
@@ -371,15 +381,17 @@ async function enableMotionIfNeeded() {
     console.warn('DeviceOrientation permission request failed:', err);
   }
 
-  // Some browsers (older examples) expose DeviceMotionEvent.requestPermission — try it as a fallback
+  // Fallback: DeviceMotionEvent.requestPermission
   try {
     if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
       const res = await DeviceMotionEvent.requestPermission();
       if (res === 'granted') {
         window.addEventListener('deviceorientation', handleOrientation);
+        updateMotionStatus('enabled (DeviceMotionEvent granted)');
         console.debug('DeviceOrientation enabled via DeviceMotionEvent.requestPermission fallback.');
         return;
       } else {
+        updateMotionStatus('denied');
         console.warn('DeviceMotion permission not granted:', res);
       }
     }
@@ -390,12 +402,37 @@ async function enableMotionIfNeeded() {
   // Default: non-iOS browsers typically don't require a permission prompt for deviceorientation
   if (typeof window !== 'undefined') {
     window.addEventListener('deviceorientation', handleOrientation);
+    // also listen to devicemotion as an alternate
+    window.addEventListener('devicemotion', handleMotion);
+    updateMotionStatus('listener attached');
     console.debug('DeviceOrientation listener attached without explicit permission.');
   }
 }
 
-// Try to enable on user interaction (some browsers require a user gesture for permission popups)
+// also provide a manual Enable Motion button (helps testing)
+const enableBtn = document.getElementById('enable-motion');
+if (enableBtn) {
+  enableBtn.addEventListener('click', (e) => { enableMotionIfNeeded().catch(err=>console.warn(err)); });
+}
+
+// Try to enable on any user interaction (some browsers require a user gesture for permission popups)
 window.addEventListener('click', enableMotionIfNeeded, { once: true });
+
+function handleMotion(event) {
+  // devicemotion provides accelerationIncludingGravity etc.
+  lastMotionTs = performance.now();
+  updateMotionStatus('motion event');
+  // No direct mapping used here; prefer deviceorientation for gravity mapping
+}
+
+// show warning if no motion events after a short while
+setInterval(()=>{
+  if (!motionStatusEl) return;
+  const now = performance.now();
+  if (lastMotionTs && now - lastMotionTs > 3000) {
+    updateMotionStatus('no recent motion events');
+  }
+}, 1500);
 
 // Resize
 window.addEventListener('resize', ()=> {
