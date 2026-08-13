@@ -318,21 +318,44 @@ function createFlipper(side='left') {
 
   const restAngle = isLeft ? -0.45 : 0.45;
   const upAngle = isLeft ? 1.05 : -1.05;
-  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12, shapeOffset };
+  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12, shapeOffset, prevAngle: restAngle, angularVel: 0 };
 
-  // gentle collision assist when moving up
+  // collision assist: compute surface velocity from kinematic rotation and apply an impulse to the ball
   body.addEventListener && body.addEventListener('collide', (e) => {
     try {
       if (e.body && e.body._isBall) {
+        const ball = e.body;
         const movingUp = state.targetAngle > state.angle;
         if (!movingUp) return;
+
+        // estimate angular velocity around Y (rad/s)
+        const angVel = state.angularVel || 0;
+        // vector from flipper pivot to ball (world coordinates)
+        const rx = ball.position.x - state.body.position.x;
+        const rz = ball.position.z - state.body.position.z;
+        // surface velocity at contact for rotation about Y: v = omega x r -> (omega*rz, 0, -omega*rx)
+        const vSurfX = angVel * rz;
+        const vSurfZ = -angVel * rx;
+
+        // ball velocity components
+        const bvx = ball.velocity.x || 0;
+        const bvy = ball.velocity.y || 0;
+        const bvz = ball.velocity.z || 0;
+
+        // contact normal (fall back to outward Y if not available)
         const contact = e.contact || null;
-        let nx=0, ny=1, nz=0;
+        let nx = 0, ny = 1, nz = 0;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
-        const base = 4;
-        const imp = new CANNON.Vec3(-nx*base, -ny*base*0.5, -nz*base);
-        if (e.body.applyImpulse) e.body.applyImpulse(imp, e.body.position);
-        playPing(360, 0.04);
+
+        // relative velocity along normal (approx using surface horizontal components)
+        const rel = (vSurfX - bvx) * nx + (0 - bvy) * ny + (vSurfZ - bvz) * nz;
+        if (rel <= 0) return; // not moving into the ball
+
+        const mass = ball.mass || 1;
+        const impulseMag = mass * rel * 1.5; // tuning factor
+        const imp = new CANNON.Vec3(nx * impulseMag, ny * impulseMag, nz * impulseMag);
+        if (ball.applyImpulse) ball.applyImpulse(imp, ball.position);
+        playPing(420 + Math.random()*120, 0.04);
       }
     } catch (err) { console.warn('flipper collide helper error', err); }
   });
