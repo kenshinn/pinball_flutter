@@ -188,7 +188,13 @@ function createBumper(x,z,r=0.6, points=100) {
   body.material = bumperMaterial; // use shared bumper material
   world.addBody(body);
 
-
+  // ensure visual matches physics orientation
+  try {
+    const tq = body.quaternion;
+    mesh.quaternion.set(tq.x, tq.y, tq.z, tq.w);
+  } catch (err) {
+    console.warn('failed to sync bumper visual quaternion', err);
+  }
 
   // collision scoring + debug log
   body.addEventListener('collide', (e) => {
@@ -300,7 +306,12 @@ function createFlipper(side='left') {
   // Use kinematic so we control rotation directly
   body.type = CANNON.Body.KINEMATIC;
   body.position.set(x, y, z);
+  // set material so collisions with balls use bumperBallContact
+  body.material = bumperMaterial;
   world.addBody(body);
+
+  // ensure visual matches physics initial quaternion
+  try { mesh.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w); } catch (e) {}
 
 
 
