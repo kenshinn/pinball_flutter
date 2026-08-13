@@ -279,81 +279,61 @@ function spawnAtCenter() {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Flippers (kinematic bodies animated)
+// Flippers implemented with hinge + motor
 const flippers = [];
 function createFlipper(side='left') {
   const isLeft = side === 'left';
-  // flipper geometry: length (x), height (vertical), thickness (z)
-  // increased length/height so flippers reliably block and flip balls
   const length = 2.6;
   const thickness = 0.2;
   const height = 0.48;
-  // place the flippers a bit wider so they cover more of the playfield
   const x = isLeft ? -2.2 : 2.2;
   const z = tableSize.h/2 - 0.6;
-  // raise the flipper so it intersects the ball resting height more consistently
   const y = bedY + 0.32;
 
   const geo = new THREE.BoxGeometry(length, height, thickness);
   const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, y, z);
-  // keep flipper visuals in the scene (not in tableGroup) so copying physics quaternions remains consistent
   scene.add(mesh);
 
+  // dynamic body so motor can move it
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
-  const body = new CANNON.Body({ mass: 0 });
+  const body = new CANNON.Body({ mass: 1 });
   body.addShape(shape);
-  // Use kinematic so we control rotation directly
-  body.type = CANNON.Body.KINEMATIC;
   body.position.set(x, y, z);
-  // set material so collisions with balls use bumperBallContact
   body.material = bumperMaterial;
   world.addBody(body);
 
-  // ensure visual matches physics initial quaternion
-  try { mesh.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w); } catch (e) {}
+  // static pivot
+  const pivot = new CANNON.Body({ mass: 0 });
+  pivot.position.set(x, y, z);
+  world.addBody(pivot);
 
+  // hinge around Y axis
+  const axis = new CANNON.Vec3(0,1,0);
+  const hinge = new CANNON.HingeConstraint(pivot, body, { pivotA: new CANNON.Vec3(0,0,0), axisA: axis, pivotB: new CANNON.Vec3(0,0,0), axisB: axis, maxForce: 1e6 });
+  world.addConstraint(hinge);
+  try { hinge.enableMotor(); hinge.setMotorSpeed(0); hinge.motorMaxForce = 1e4; } catch (e) { console.debug('hinge motor API may differ', e); }
 
-
-  // keep the visual mesh slightly above the bed to avoid z-fighting
   mesh.position.set(x, y + 0.01, z);
-  mesh.scale.set(1, 1, 1);
 
-  // larger travel angle and faster angular speed for a stronger flip
-  const restAngle = isLeft ? -0.45 : 0.45; // slightly more open at rest
-  const upAngle = isLeft ? 1.05 : -1.05; // ~60 degrees
-  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 18 };
+  const restAngle = isLeft ? -0.45 : 0.45;
+  const upAngle = isLeft ? 1.05 : -1.05;
+  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: isLeft ? 8 : -8, downSpeed: isLeft ? -4 : 4 };
 
-  // when the flipper collides with a ball while moving, add an impulse to the ball along contact normal
-  body.addEventListener('collide', (e) => {
+  // small extra impulse on collide when engaged
+  body.addEventListener && body.addEventListener('collide', (e) => {
     try {
-      if (e.body && e.body._isBall) {
-        // only give extra kick when flipper is moving toward the ball (engaging)
-        const movingUp = state.targetAngle > state.angle;
-        if (!movingUp) return;
-        // compute impulse magnitude from angular speed and angle delta
-        const angleDelta = Math.abs(state.targetAngle - state.angle);
-        const base = Math.min(Math.max(state.angularSpeed * angleDelta * 0.72, 2), 48); // +20% overall strength
-        // contact normal (world) - note: contact normal points from body i to body j
+      if (e.body && e.body._isBall && state.engaged) {
         const contact = e.contact || null;
-        let nx = 0, ny = 1, nz = 0;
+        let nx=0, ny=1, nz=0;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
-        // apply impulse opposite to contact normal (so it pushes the ball away)
-        const imp = new CANNON.Vec3(-nx * base, -ny * base * 0.85, -nz * base);
-        // apply at the ball's position
-        if (e.body.applyImpulse) {
-          e.body.applyImpulse(imp, e.body.position);
-        } else if (e.body.applyForce) {
-          // fallback
-          e.body.applyForce(imp, e.body.position);
-        }
-        // small sound feedback scaled by kick
-        playPing(300 + Math.min(base*20, 1200), 0.04);
+        const base = 6;
+        const imp = new CANNON.Vec3(-nx*base, -ny*base*0.6, -nz*base);
+        if (e.body.applyImpulse) e.body.applyImpulse(imp, e.body.position);
+        playPing(400, 0.04);
       }
-    } catch (err) {
-      console.warn('flipper collide handler error', err);
-    }
+    } catch (err) { console.warn('flipper collision helper error', err); }
   });
 
   flippers.push(state);
@@ -375,12 +355,25 @@ createFlipper('right');
   addWall({ x: -guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
   // right guard
   addWall({ x: guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
+  // also add taller visual side walls closer to the flippers to prevent lateral drains
+  addWall({ x: -tableSize.w/2 + 0.2, y: 1.2, z: tableSize.h/2 - 2.0 }, { x: 0, y: 0, z: 0 }, { x: 0.4, y: 2.4, z: 2.8 }, { color: 0x222222 });
+  addWall({ x: tableSize.w/2 - 0.2, y: 1.2, z: tableSize.h/2 - 2.0 }, { x: 0, y: 0, z: 0 }, { x: 0.4, y: 2.4, z: 2.8 }, { color: 0x222222 });
 })();
 
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
-  f.targetAngle = engaged ? f.upAngle : f.restAngle;
+  f.engaged = engaged;
+  try {
+    if (f.hinge && f.hinge.enableMotor) {
+      if (engaged) { f.hinge.enableMotor(); f.hinge.setMotorSpeed(f.upSpeed); }
+      else { f.hinge.setMotorSpeed(f.downSpeed); }
+    } else {
+      // fallback: nudge kinematic-style if hinge API missing
+      if (engaged) f.body.angularVelocity.set(0, f.upSpeed, 0);
+      else f.body.angularVelocity.set(0, f.downSpeed, 0);
+    }
+  } catch (err) { console.warn('setFlipper hinge error', err); }
 }
 
 // Controls: keyboard and touch UI
@@ -633,16 +626,19 @@ function animate(time) {
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
 
-    // update kinematic flippers: smoothly approach target angle
+    // update flipper visuals from physics bodies (hinge+motor handles motion)
     for (const f of flippers) {
-      const diff = f.targetAngle - f.angle;
-      const step = Math.sign(diff) * Math.min(Math.abs(diff), f.angularSpeed * dt);
-      f.angle += step;
-      const q = new CANNON.Quaternion();
-      q.setFromEuler(0, f.angle, 0, 'XYZ');
-      f.body.quaternion.copy(q);
-      f.mesh.position.copy(f.body.position);
-      f.mesh.quaternion.copy(f.body.quaternion);
+      try {
+        // ensure motor target speed when engaged/disengaged (keeps moving toward position)
+        if (f.hinge && f.hinge.setMotorSpeed) {
+          // nothing here; setFlipper already adjusts motor speed on input
+        }
+        // sync mesh to body
+        if (f.mesh && f.body) {
+          f.mesh.position.copy(f.body.position);
+          f.mesh.quaternion.copy(f.body.quaternion);
+        }
+      } catch (err) { console.warn('flipper sync error', err); }
     }
 
     // sync balls and other meshes, guard against invalid values
