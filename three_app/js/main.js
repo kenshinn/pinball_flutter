@@ -68,12 +68,13 @@ world.solver.iterations = 20; // a bit higher for stability
 // Create shared materials so contact properties between bumpers/balls are explicit
 const bumperMaterial = new CANNON.Material('bumper');
 const ballMaterial = new CANNON.Material('ball');
-// bumper <-> ball: bouncy but <= 1.0 to avoid energy explosion
-const bumperBallContact = new CANNON.ContactMaterial(bumperMaterial, ballMaterial, { restitution: 0.9, friction: 0.02 });
+// bumper <-> ball: tuned bounce/friction (raised restitution slightly for snappier hits)
+const bumperBallContact = new CANNON.ContactMaterial(bumperMaterial, ballMaterial, { restitution: 0.95, friction: 0.015 });
 world.addContactMaterial(bumperBallContact);
-// ball <-> ball: normal bounciness
-const ballBallContact = new CANNON.ContactMaterial(ballMaterial, ballMaterial, { restitution: 0.8, friction: 0.02 });
+// ball <-> ball: slightly more bouncy for livelier interactions
+const ballBallContact = new CANNON.ContactMaterial(ballMaterial, ballMaterial, { restitution: 0.88, friction: 0.02 });
 world.addContactMaterial(ballBallContact);
+// flipper <-> ball (same materials used), contact tweaks already covered by bumperBallContact
 
 const bodies = [];
 const meshes = [];
@@ -333,13 +334,13 @@ function createFlipper(side='left') {
         if (!movingUp) return;
         // compute impulse magnitude from angular speed and angle delta
         const angleDelta = Math.abs(state.targetAngle - state.angle);
-        const base = Math.min(Math.max(state.angularSpeed * angleDelta * 0.6, 2), 40);
+        const base = Math.min(Math.max(state.angularSpeed * angleDelta * 0.72, 2), 48); // +20% overall strength
         // contact normal (world) - note: contact normal points from body i to body j
         const contact = e.contact || null;
         let nx = 0, ny = 1, nz = 0;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
         // apply impulse opposite to contact normal (so it pushes the ball away)
-        const imp = new CANNON.Vec3(-nx * base, -ny * base * 0.8, -nz * base);
+        const imp = new CANNON.Vec3(-nx * base, -ny * base * 0.85, -nz * base);
         // apply at the ball's position
         if (e.body.applyImpulse) {
           e.body.applyImpulse(imp, e.body.position);
