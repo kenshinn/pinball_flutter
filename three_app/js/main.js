@@ -11,6 +11,37 @@ scene.background = new THREE.Color(0x111111);
 const tableGroup = new THREE.Group();
 scene.add(tableGroup);
 
+// Registry of objects that belong to the table (physics body + visual mesh + original local transform)
+const tableObjects = [];
+
+// Helper: sync registered table objects to the current tableGroup rotation
+function syncTableObjects() {
+  // get table quaternion as THREE.Quaternion
+  const tableQuat = tableGroup.quaternion.clone();
+  for (const obj of tableObjects) {
+    try {
+      const local = new THREE.Vector3(obj.localPos.x, obj.localPos.y, obj.localPos.z);
+      const worldPos = local.clone().applyQuaternion(tableQuat);
+      // update physics body position
+      if (obj.body) {
+        obj.body.position.set(worldPos.x, worldPos.y, worldPos.z);
+      }
+      // compose quaternions: tableQuat * localQuat
+      const localQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(obj.localEuler.x, obj.localEuler.y, obj.localEuler.z, 'XYZ'));
+      const worldQuat = tableQuat.clone().multiply(localQuat);
+      if (obj.body) {
+        obj.body.quaternion.set(worldQuat.x, worldQuat.y, worldQuat.z, worldQuat.w);
+      }
+      if (obj.mesh) {
+        obj.mesh.position.set(worldPos.x, worldPos.y, worldPos.z);
+        obj.mesh.quaternion.copy(worldQuat);
+      }
+    } catch (err) {
+      console.warn('syncTableObjects error', err);
+    }
+  }
+}
+
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 8, 12);
 
@@ -87,15 +118,19 @@ function addWall(pos, quat, size, options = {}) {
   world.addBody(body);
 
   // visual mesh (optional, default true)
+  let mesh = null;
   if (options.visual !== false) {
     const mat = new THREE.MeshStandardMaterial({ color: options.color || 0x444444, metalness: 0.1, roughness: 0.7 });
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
-    const mesh = new THREE.Mesh(geo, mat);
+    mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pos.x, pos.y, pos.z);
     mesh.quaternion.setFromEuler(quat.x, quat.y, quat.z, 'XYZ');
     // attach visuals into tableGroup so we can tilt them together
     if (typeof tableGroup !== 'undefined') tableGroup.add(mesh); else scene.add(mesh);
   }
+
+  // register for table sync
+  tableObjects.push({ body, mesh, localPos: { x: pos.x, y: pos.y, z: pos.z }, localEuler: { x: quat.x, y: quat.y, z: quat.z } });
 }
 
 
@@ -153,6 +188,9 @@ function createBumper(x,z,r=0.6, points=100) {
   body.position.set(x, bedY + height/2, z);
   body.material = bumperMaterial; // use shared bumper material
   world.addBody(body);
+
+  // register bumper for table sync
+  tableObjects.push({ body, mesh, localPos: { x: x, y: bedY + height/2, z: z }, localEuler: { x: 0, y: 0, z: Math.PI/2 } });
 
   // collision scoring + debug log
   body.addEventListener('collide', (e) => {
@@ -265,6 +303,9 @@ function createFlipper(side='left') {
   body.type = CANNON.Body.KINEMATIC;
   body.position.set(x, y, z);
   world.addBody(body);
+
+  // register flipper for table sync
+  tableObjects.push({ body, mesh, localPos: { x: x, y: y, z: z }, localEuler: { x: 0, y: 0, z: 0 } });
 
   // keep the visual mesh slightly above the bed to avoid z-fighting
   mesh.position.set(x, y + 0.01, z);
@@ -551,6 +592,8 @@ function animate(time) {
 
   if (lastTime !== undefined) {
     const dt = Math.min((time - lastTime) / 1000, 0.05);
+    // ensure static/kinematic table objects follow the visual table rotation so physics matches visuals
+    syncTableObjects();
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
 
