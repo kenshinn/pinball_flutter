@@ -297,71 +297,62 @@ function createFlipper(side='left') {
   mesh.position.set(x, y, z);
   scene.add(mesh);
 
+  // Dynamic (rigid) flipper body — try treating as a steel/dynamic body with hinge constraint
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
-  // We'll make the body origin sit at the hinge pivot. User requested pivot on the opposite end — flip signs.
-  // Move pivot to the other side of the flipper compared to previous behavior.
-  const pivotX = x + (isLeft ? (-length/2) : (length/2));
-  const body = new CANNON.Body({ mass: 0 });
-  // shape offset so the box extends outward from the pivot (flipped)
-  const shapeOffset = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
-  body.addShape(shape, shapeOffset);
-  // kinematic body: we update quaternion directly in the animation loop
-  body.type = CANNON.Body.KINEMATIC;
-  body.position.set(pivotX, y, z);
+  // dynamic body centered at flipper center
+  const body = new CANNON.Body({ mass: 3 }); // heavier to act like steel
+  body.addShape(shape);
+  body.position.set(x, y, z);
   body.material = bumperMaterial;
+  body.angularDamping = 0.4;
   world.addBody(body);
 
-  // position mesh initially at the flipper center (pivot + rotated offset)
-  const meshPosX = pivotX + shapeOffset.x;
-  mesh.position.set(meshPosX, y + 0.01, z);
-  mesh.scale.set(1,1,1);
+  // pivot (static) at inner end toward the center of the table
+  const pivotX = x + (isLeft ? (length/2) : (-length/2));
+  const pivot = new CANNON.Body({ mass: 0 });
+  pivot.position.set(pivotX, y, z);
+  world.addBody(pivot);
+
+  // hinge around Y axis, pivotB is expressed in body-local coordinates (from body center to pivot)
+  const axis = new CANNON.Vec3(0,1,0);
+  const pivotB = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
+  const hinge = new CANNON.HingeConstraint(pivot, body, {
+    pivotA: new CANNON.Vec3(0,0,0), axisA: axis,
+    pivotB: pivotB, axisB: axis,
+    maxForce: 1e7
+  });
+  world.addConstraint(hinge);
 
   const restAngle = isLeft ? -0.45 : 0.45;
   const upAngle = isLeft ? 1.05 : -1.05;
-  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12, shapeOffset, prevAngle: restAngle, angularVel: 0 };
 
-  // collision assist: compute surface velocity from kinematic rotation and apply an impulse to the ball
+  try {
+    if (typeof hinge.setLimits === 'function') {
+      hinge.setLimits(Math.min(restAngle, upAngle), Math.max(restAngle, upAngle), 0.9, 0.3);
+    }
+    hinge.disableMotor && hinge.disableMotor();
+    hinge.setMotorSpeed && hinge.setMotorSpeed(0);
+    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e6;
+  } catch (err) { console.warn('hinge setup failed', err); }
+
+  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: 12, downSpeed: 8 };
+
+  // small assist impulse on collision while flipper is actively driving (helps counter tunneling)
   body.addEventListener && body.addEventListener('collide', (e) => {
     try {
-      if (e.body && e.body._isBall) {
+      if (e.body && e.body._isBall && state.engaged) {
         const ball = e.body;
-        const movingUp = state.targetAngle > state.angle;
-        if (!movingUp) return;
-
-        // estimate angular velocity around Y (rad/s)
-        const angVel = state.angularVel || 0;
-        // vector from flipper pivot to ball (world coordinates)
-        const rx = ball.position.x - state.body.position.x;
-        const rz = ball.position.z - state.body.position.z;
-        // surface velocity at contact for rotation about Y: v = omega x r -> (omega*rz, 0, -omega*rx)
-        const vSurfX = angVel * rz;
-        const vSurfZ = -angVel * rx;
-
-        // ball velocity components
-        const bvx = ball.velocity.x || 0;
-        const bvy = ball.velocity.y || 0;
-        const bvz = ball.velocity.z || 0;
-
-        // contact normal (fall back to outward Y if not available)
+        // try to use contact normal if available
         const contact = e.contact || null;
         let nx = 0, ny = 1, nz = 0;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
-
-        // relative velocity along normal (approx using surface horizontal components)
-        const rel = (vSurfX - bvx) * nx + (0 - bvy) * ny + (vSurfZ - bvz) * nz;
-        if (rel <= 0) return; // not moving into the ball
-
         const mass = ball.mass || 1;
-        // stronger strike impulse tuned for upward lift; scale with angular velocity too
-        const speedFactor = Math.max(1.0, Math.abs(angVel) * 0.8);
-        const impulseMag = mass * rel * 2.2 * speedFactor; // increased tuning factor
-        const imp = new CANNON.Vec3(nx * impulseMag, ny * impulseMag + Math.abs(angVel) * mass * 0.6, nz * impulseMag);
+        const impMag = Math.min(12, 6 + Math.abs(state.upSpeed));
+        const imp = new CANNON.Vec3(nx * impMag, ny * impMag * 0.6, nz * impMag);
         if (ball.applyImpulse) ball.applyImpulse(imp, ball.position);
-        // small velocity nudge upward to reduce chance of passing through
-        try { ball.velocity.y += Math.abs(angVel) * 0.8; } catch (e) {}
         playPing(420 + Math.random()*120, 0.04);
       }
-    } catch (err) { console.warn('flipper collide helper error', err); }
+    } catch (err) { console.warn('flipper collision helper error', err); }
   });
 
   flippers.push(state);
