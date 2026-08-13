@@ -7,6 +7,10 @@ const container = document.getElementById('container');
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
+// Visual group for the table so we can tilt visuals independently of physics
+const tableGroup = new THREE.Group();
+scene.add(tableGroup);
+
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 8, 12);
 
@@ -89,7 +93,8 @@ function addWall(pos, quat, size, options = {}) {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pos.x, pos.y, pos.z);
     mesh.quaternion.setFromEuler(quat.x, quat.y, quat.z, 'XYZ');
-    scene.add(mesh);
+    // attach visuals into tableGroup so we can tilt them together
+    if (typeof tableGroup !== 'undefined') tableGroup.add(mesh); else scene.add(mesh);
   }
 }
 
@@ -113,7 +118,8 @@ floorMesh.rotation.x = -Math.PI/2;
 // slight upward offset to avoid coplanar overlap with physics bed
 floorMesh.position.y = bedY + 0.001;
 floorMesh.receiveShadow = true;
-scene.add(floorMesh);
+// add to tableGroup so visuals tilt together
+tableGroup.add(floorMesh);
 
 // Side walls (left and right only)
 // side walls: physics only (visuals hidden so they don't block flipper visuals)
@@ -134,7 +140,8 @@ function createBumper(x,z,r=0.6, points=100) {
   const geo = new THREE.CylinderGeometry(r, r, height, 24);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, bedY + height/2, z);
-  scene.add(mesh);
+  // attach bumper visuals to tableGroup so they tilt visually
+  tableGroup.add(mesh);
 
   // physics cylinder: align cylinder axis with Y by rotating the shape when adding
   const shape = new CANNON.Cylinder(r, r, height, 16);
@@ -248,7 +255,8 @@ function createFlipper(side='left') {
   const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, y, z);
-  scene.add(mesh);
+  // add to visual group so flippers tilt with the table
+  tableGroup.add(mesh);
 
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
   const body = new CANNON.Body({ mass: 0 });
@@ -352,6 +360,21 @@ function handleOrientation(event) {
   const gx = Math.sin(gamma * Math.PI/180) * 9.82;
   const gz = Math.sin(beta * Math.PI/180) * 9.82;
   world.gravity.set(gx, -9.82, gz);
+
+  // update debug status and timestamp
+  lastMotionTs = performance.now();
+  try { updateMotionStatus(`β:${beta.toFixed(1)}° γ:${gamma.toFixed(1)}°`); } catch (e) {}
+
+  // visually tilt the table to match device orientation (scaled down so it's pleasant)
+  if (typeof tableGroup !== 'undefined') {
+    const betaRad = THREE.MathUtils.degToRad(beta);
+    const gammaRad = THREE.MathUtils.degToRad(gamma);
+    // apply a damping factor so visuals don't exactly match physics but give user a sense of tilt
+    tableGroup.rotation.x = -betaRad * 0.55; // front-back
+    tableGroup.rotation.z = -gammaRad * 0.55; // left-right
+  }
+
+  console.debug('DeviceOrientation', { beta, gamma, gx, gz });
 }
 
 const motionStatusEl = document.getElementById('motion-status');
