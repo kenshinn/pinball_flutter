@@ -312,6 +312,10 @@ function createFlipper(side='left') {
   pivot.position.set(x + pivotOffsetLocal.x, y + pivotOffsetLocal.y, z + pivotOffsetLocal.z);
   world.addBody(pivot);
 
+  // define flipper angles before creating hinge limits
+  const restAngle = isLeft ? -0.45 : 0.45;
+  const upAngle = isLeft ? 1.05 : -1.05;
+
   // hinge around Y axis
   const axis = new CANNON.Vec3(0,1,0);
   // pivotA at pivot center, pivotB expressed in body local coordinates
@@ -327,17 +331,17 @@ function createFlipper(side='left') {
     hinge.setMotorSpeed && hinge.setMotorSpeed(0);
     // set rotation limits (radians)
     if (typeof hinge.setLimits === 'function') {
-      const lower = isLeft ? restAngle : -upAngle; // ensure correct orientation
-      const upper = isLeft ? upAngle : -restAngle;
+      const lower = Math.min(restAngle, upAngle);
+      const upper = Math.max(restAngle, upAngle);
       hinge.setLimits(lower, upper, 0.9, 0.3);
     }
   } catch (e) { console.debug('hinge motor API may differ', e); }
 
   mesh.position.set(x, y + 0.01, z);
 
-  const restAngle = isLeft ? -0.45 : 0.45;
-  const upAngle = isLeft ? 1.05 : -1.05;
-  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: Math.abs(isLeft ? 8 : -8), downSpeed: Math.abs(isLeft ? 4 : 4) };
+  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: Math.abs(isLeft ? 8 : 8), downSpeed: Math.abs(isLeft ? 4 : 4) };
+  // add angular damping to slow uncontrolled rotation
+  body.angularDamping = 0.8;
 
   // configure hinge limits and motor force so it can't spin freely
   try {
