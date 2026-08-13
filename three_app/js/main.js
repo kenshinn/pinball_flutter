@@ -379,6 +379,34 @@ createFlipper('right');
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
+  // if hinge-based dynamic flipper, drive motor toward target angle
+  if (f.hinge) {
+    f.engaged = engaged;
+    const target = engaged ? f.upAngle : f.restAngle;
+    try {
+      let cur = 0;
+      if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
+      else if (f.body && f.body.quaternion) {
+        const q = f.body.quaternion;
+        const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+        const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
+        cur = e.y || 0;
+      }
+      // normalize delta to [-PI,PI]
+      let delta = target - cur;
+      while (delta > Math.PI) delta -= Math.PI*2;
+      while (delta < -Math.PI) delta += Math.PI*2;
+      if (Math.abs(delta) < 0.02) {
+        try { f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+        return;
+      }
+      const speedAbs = engaged ? f.upSpeed : f.downSpeed;
+      const speed = Math.sign(delta) * Math.abs(speedAbs);
+      try { f.hinge.enableMotor && f.hinge.enableMotor(); f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
+    } catch (err) { console.warn('setFlipper hinge error', err); }
+    return;
+  }
+  // fallback kinematic behavior
   f.targetAngle = engaged ? f.upAngle : f.restAngle;
 }
 
