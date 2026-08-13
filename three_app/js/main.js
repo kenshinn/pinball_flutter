@@ -394,11 +394,8 @@ if (clearBtn) clearBtn.addEventListener('click', ()=> clearBalls());
 const orbitToggle = document.getElementById('orbit');
 if (orbitToggle) orbitToggle.addEventListener('change', (e)=> { 
   controls.enabled = orbitToggle.checked;
-  // when orbiting disabled by user, also stop visual table tilt to avoid unexpected rotation
-  visualsTiltEnabled = orbitToggle.checked;
-  if (!visualsTiltEnabled) {
-    tableGroup.rotation.set(0,0,0);
-  }
+  // do NOT change visualsTiltEnabled here — user asked to keep visual tilt disabled
+  if (!visualsTiltEnabled) tableGroup.rotation.set(0,0,0);
 });
 
 // Device orientation -> gravity
@@ -430,7 +427,7 @@ const motionDiagEl = document.getElementById('motion-diagnostics');
 let lastMotionTs = 0;
 let simulateTilt = false;
 let simulateTick = 0;
-let visualsTiltEnabled = true; // when false, visuals won't rotate — keeps visuals aligned with physics
+let visualsTiltEnabled = false; // default: visual table tilt disabled (user requested)
 
 function updateMotionStatus(text) {
   try { if (motionStatusEl) motionStatusEl.textContent = `Motion: ${text}`; } catch (e) {}
