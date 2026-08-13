@@ -432,6 +432,30 @@ async function enableMotionIfNeeded() {
   }
 }
 
+// If deviceorientation isn't available on some Android browsers, we'll try to derive gravity from devicemotion
+function handleMotion(event) {
+  lastMotionTs = performance.now();
+  try { updateMotionStatus('devicemotion'); } catch (e) {}
+
+  const a = event.accelerationIncludingGravity;
+  if (!a || typeof a.x !== 'number') return;
+
+  // build vector and scale to gravity magnitude (approx)
+  const ax = a.x || 0;
+  const ay = a.y || 0;
+  const az = a.z || 0;
+  // compute vector length
+  const len = Math.hypot(ax, ay, az) || 1;
+  const scale = 9.82 / len;
+  // map device axes to world: approximate mapping (may vary by device/orientation)
+  // assume device X -> world X, device Y -> world Z (forward), and device Z -> up
+  const gx = ax * scale;
+  const gz = ay * scale;
+  world.gravity.set(gx, -9.82, gz);
+
+  console.debug('DeviceMotion derived gravity', { ax, ay, az, gx, gz });
+}
+
 // also provide a manual Enable Motion button (helps testing)
 const enableBtn = document.getElementById('enable-motion');
 if (enableBtn) {
