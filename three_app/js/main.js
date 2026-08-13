@@ -1,0 +1,437 @@
+import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
+import { OrbitControls } from 'https://unpkg.com/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+import * as CANNON from 'https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.js';
+
+const container = document.getElementById('container');
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 8, 12);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+container.appendChild(renderer.domElement);
+
+const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+scene.add(ambient);
+const dir = new THREE.DirectionalLight(0xffffff, 0.6);
+dir.position.set(5, 10, 5);
+scene.add(dir);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI / 2.1;
+
+// Physics
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+world.broadphase = new CANNON.NaiveBroadphase();
+world.solver.iterations = 20; // a bit higher for stability
+
+// Create shared materials so contact properties between bumpers/balls are explicit
+const bumperMaterial = new CANNON.Material('bumper');
+const ballMaterial = new CANNON.Material('ball');
+// bumper <-> ball: bouncy but <= 1.0 to avoid energy explosion
+const bumperBallContact = new CANNON.ContactMaterial(bumperMaterial, ballMaterial, { restitution: 0.9, friction: 0.02 });
+world.addContactMaterial(bumperBallContact);
+// ball <-> ball: normal bounciness
+const ballBallContact = new CANNON.ContactMaterial(ballMaterial, ballMaterial, { restitution: 0.8, friction: 0.02 });
+world.addContactMaterial(ballBallContact);
+
+const bodies = [];
+const meshes = [];
+
+// Score
+let score = 0;
+const scoreEl = document.getElementById('score');
+function updateScore(v) {
+  score += v || 0;
+  if (scoreEl) scoreEl.textContent = `Score: ${score}`;
+}
+
+// Audio (simple collision sound)
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playPing(freq = 440, duration = 0.08) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'sine';
+  o.frequency.value = freq;
+  g.gain.value = 0.0001;
+  o.connect(g);
+  g.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  g.gain.cancelScheduledValues(now);
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, now + duration);
+  o.start(now);
+  o.stop(now + duration + 0.02);
+}
+
+// Table / container
+const tableSize = { w: 8, h: 12 };
+
+function addWall(pos, quat, size, options = {}) {
+  // physics body
+  const shape = new CANNON.Box(new CANNON.Vec3(size.x/2, size.y/2, size.z/2));
+  const body = new CANNON.Body({ mass: 0 });
+  body.addShape(shape);
+  body.position.set(pos.x, pos.y, pos.z);
+  body.quaternion.setFromEuler(quat.x, quat.y, quat.z, 'XYZ');
+  world.addBody(body);
+
+  // visual mesh (optional, default true)
+  if (options.visual !== false) {
+    const mat = new THREE.MeshStandardMaterial({ color: options.color || 0x444444, metalness: 0.1, roughness: 0.7 });
+    const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(pos.x, pos.y, pos.z);
+    mesh.quaternion.setFromEuler(quat.x, quat.y, quat.z, 'XYZ');
+    scene.add(mesh);
+  }
+}
+
+
+// Table bed (thin static box) — gives a finite table surface the balls can roll on
+const bedThickness = 0.2;
+const bedY = -1; // top surface at y = -1
+// add bed physics without a thick visual box (we use a thin plane mesh for visuals)
+addWall({ x: 0, y: bedY - bedThickness/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: tableSize.w + 2, y: bedThickness, z: tableSize.h + 2 }, { visual: false });
+
+// Visual floor (match the bed)
+const floorGeo = new THREE.PlaneGeometry(tableSize.w + 2, tableSize.h + 2);
+const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness:0.2, roughness:0.8 });
+// prevent z-fighting by enabling polygon offset on the material
+floorMat.polygonOffset = true;
+floorMat.polygonOffsetFactor = 1.0;
+floorMat.polygonOffsetUnits = 4.0;
+const floorMesh = new THREE.Mesh(floorGeo, floorMat);
+// plane geometry faces +Z by default; rotate to horizontal
+floorMesh.rotation.x = -Math.PI/2;
+// slight upward offset to avoid coplanar overlap with physics bed
+floorMesh.position.y = bedY + 0.001;
+floorMesh.receiveShadow = true;
+scene.add(floorMesh);
+
+// Side walls (left and right only)
+// side walls: physics only (visuals hidden so they don't block flipper visuals)
+addWall({x:-tableSize.w/2 -1, y:2.5, z:0}, {x:0,y:0,z:0}, {x:1, y:5, z:tableSize.h}, { visual: false });
+addWall({x:tableSize.w/2 +1, y:2.5, z:0}, {x:0,y:0,z:0}, {x:1, y:5, z:tableSize.h}, { visual: false });
+
+// Ramp wall kept at the TOP (opposite the flippers) to keep balls in play
+// Move it to the negative z side so it doesn't block flippers at the bottom.
+const rampHeight = 1;
+addWall({x:0, y: bedY + rampHeight/2, z:-tableSize.h/2 + 1}, {x: -0.3, y:0, z:0}, {x:tableSize.w-1, y:rampHeight, z:1});
+
+// create some spherical bumpers (visual + invisible physics)
+const bumpers = [];
+function createBumper(x,z,r=0.6, points=100) {
+  // create a vertical cylinder (post) rooted on the bed so balls bounce off a grounded post
+  const height = 1.2;
+  const mat = new THREE.MeshStandardMaterial({ color: 0xff6b6b, emissive:0x220000, roughness:0.35, metalness:0.2 });
+  const geo = new THREE.CylinderGeometry(r, r, height, 24);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, bedY + height/2, z);
+  scene.add(mesh);
+
+  // physics cylinder: align cylinder axis with Y by rotating the shape when adding
+  const shape = new CANNON.Cylinder(r, r, height, 16);
+  const body = new CANNON.Body({ mass: 0 });
+  const q = new CANNON.Quaternion();
+  // rotate cylinder so its axis aligns with Y (up)
+  q.setFromEuler(0, 0, Math.PI/2, 'XYZ');
+  body.addShape(shape, new CANNON.Vec3(), q);
+  body.position.set(x, bedY + height/2, z);
+  body.material = bumperMaterial; // use shared bumper material
+  world.addBody(body);
+
+  // collision scoring + debug log
+  body.addEventListener('collide', (e) => {
+    try {
+      if (e.body && e.body._isBall) {
+        const impact = e.contact && typeof e.contact.getImpactVelocityAlongNormal === 'function' ? e.contact.getImpactVelocityAlongNormal() : null;
+        console.debug('Bumper collided with ball', { bumperPos: body.position, ballId: e.body.id, impact });
+        updateScore(points);
+        playPing(600 + Math.random()*400, 0.09);
+      }
+    } catch (err) {
+      console.warn('bumper collide handler error', err);
+    }
+  });
+
+  bumpers.push({ body, mesh });
+}
+
+createBumper(-2, 0, 0.6, 150);
+createBumper(2, -2, 0.6, 100);
+createBumper(0, 2, 0.6, 200);
+
+// Ball spawn
+let ballCount = 0;
+function spawnBall(pos) {
+  const radius = 0.35;
+  const sphereGeo = new THREE.SphereGeometry(radius, 24, 24);
+  const sphereMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, metalness:0.5, roughness:0.25 });
+  const mesh = new THREE.Mesh(sphereGeo, sphereMat);
+  mesh.scale.set(1,1,1);
+  scene.add(mesh);
+
+  const shape = new CANNON.Sphere(radius);
+  const body = new CANNON.Body({ mass: 0.9 });
+  body.addShape(shape);
+  body.position.set(pos.x, pos.y, pos.z);
+  body.linearDamping = 0.01;
+  body.angularDamping = 0.01;
+  body.material = ballMaterial; // use shared ball material
+
+  body._isBall = true; // marker
+
+  body.addEventListener('collide', (e) => {
+    try {
+      // small sound on collision + debug
+      if (e.contact && typeof e.contact.getImpactVelocityAlongNormal === 'function') {
+        const vel = e.contact.getImpactVelocityAlongNormal();
+        const vol = Math.min(Math.abs(vel)/8, 1);
+        playPing(200 + Math.random()*600, 0.04 + Math.random()*0.05);
+        console.debug('Ball collide', { ballId: body.id, vel });
+      }
+    } catch (err) {
+      console.warn('ball collide handler error', err);
+    }
+  });
+
+  world.addBody(body);
+  bodies.push(body);
+  meshes.push(mesh);
+
+  ballCount++;
+}
+
+function clearBalls() {
+  for (const b of bodies) {
+    try { world.removeBody(b); } catch (e) {}
+  }
+  bodies.length = 0;
+  for (const m of meshes) try { scene.remove(m); } catch (e) {}
+  meshes.length = 0;
+  ballCount = 0;
+}
+
+// Spawn at a safe position above the table
+function spawnAtCenter() {
+  const v = new THREE.Vector3(0, 6, 0);
+  spawnBall({x:v.x, y:v.y, z:v.z});
+}
+
+// Raycaster for pointer spawn onto floorMesh (prefer object intersection to plane)
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Flippers (kinematic bodies animated)
+const flippers = [];
+function createFlipper(side='left') {
+  const isLeft = side === 'left';
+  // flipper geometry: length (x), height (vertical), thickness (z)
+  // increased length/height so flippers reliably block and flip balls
+  const length = 2.6;
+  const thickness = 0.2;
+  const height = 0.48;
+  // place the flippers a bit wider so they cover more of the playfield
+  const x = isLeft ? -2.2 : 2.2;
+  const z = tableSize.h/2 - 0.6;
+  // raise the flipper so it intersects the ball resting height more consistently
+  const y = bedY + 0.32;
+
+  const geo = new THREE.BoxGeometry(length, height, thickness);
+  const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+
+  const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
+  const body = new CANNON.Body({ mass: 0 });
+  body.addShape(shape);
+  // Use kinematic so we control rotation directly
+  body.type = CANNON.Body.KINEMATIC;
+  body.position.set(x, y, z);
+  world.addBody(body);
+
+  // keep the visual mesh slightly above the bed to avoid z-fighting
+  mesh.position.set(x, y + 0.01, z);
+  mesh.scale.set(1, 1, 1);
+
+  // larger travel angle and faster angular speed for a stronger flip
+  const restAngle = isLeft ? -0.45 : 0.45; // slightly more open at rest
+  const upAngle = isLeft ? 1.05 : -1.05; // ~60 degrees
+  const state = { body, mesh, side, angle: restAngle, restAngle, upAngle, targetAngle: restAngle, angularSpeed: 12 };
+  flippers.push(state);
+}
+
+createFlipper('left');
+createFlipper('right');
+
+function setFlipper(side, engaged) {
+  const f = flippers.find(ff => ff.side === side);
+  if (!f) return;
+  f.targetAngle = engaged ? f.upAngle : f.restAngle;
+}
+
+// Controls: keyboard and touch UI
+window.addEventListener('keydown', (e)=>{
+  if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') setFlipper('left', true);
+  if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') setFlipper('right', true);
+  if (e.code === 'Space') spawnAtCenter();
+});
+window.addEventListener('keyup', (e)=>{
+  if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') setFlipper('left', false);
+  if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') setFlipper('right', false);
+});
+
+// Touch buttons
+const leftBtn = document.getElementById('left-flip');
+const rightBtn = document.getElementById('right-flip');
+if (leftBtn) {
+  leftBtn.addEventListener('pointerdown', ()=> setFlipper('left', true));
+  leftBtn.addEventListener('pointerup', ()=> setFlipper('left', false));
+  leftBtn.addEventListener('pointercancel', ()=> setFlipper('left', false));
+}
+if (rightBtn) {
+  rightBtn.addEventListener('pointerdown', ()=> setFlipper('right', true));
+  rightBtn.addEventListener('pointerup', ()=> setFlipper('right', false));
+  rightBtn.addEventListener('pointercancel', ()=> setFlipper('right', false));
+}
+
+// Mouse / touch spawn (tap elsewhere) — use raycast onto floorMesh so spawn position is predictable
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  // avoid triggering when clicking UI buttons
+  if (e.target && (e.target.id === 'left-flip' || e.target.id === 'right-flip' || e.target.id === 'spawn' || e.target.id === 'clear')) return;
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(floorMesh, true);
+  if (intersects && intersects.length) {
+    const pt = intersects[0].point;
+    spawnBall({ x: pt.x, y: pt.y + 2.0, z: pt.z });
+  } else {
+    // fallback to center spawn
+    spawnAtCenter();
+  }
+});
+
+// UI
+const spawnBtn = document.getElementById('spawn');
+if (spawnBtn) spawnBtn.addEventListener('click', ()=> spawnAtCenter());
+const clearBtn = document.getElementById('clear');
+if (clearBtn) clearBtn.addEventListener('click', ()=> clearBalls());
+const orbitToggle = document.getElementById('orbit');
+if (orbitToggle) orbitToggle.addEventListener('change', (e)=> { controls.enabled = orbitToggle.checked; });
+
+// Device orientation -> gravity
+function handleOrientation(event) {
+  const gamma = event.gamma || 0; // left-right
+  const beta = event.beta || 0; // front-back
+  const gx = Math.sin(gamma * Math.PI/180) * 9.82;
+  const gz = Math.sin(beta * Math.PI/180) * 9.82;
+  world.gravity.set(gx, -9.82, gz);
+}
+
+async function enableMotionIfNeeded() {
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    try {
+      const res = await DeviceMotionEvent.requestPermission();
+      if (res === 'granted') {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
+    } catch (err) {
+      console.warn('DeviceMotion permission error', err);
+    }
+  } else {
+    window.addEventListener('deviceorientation', handleOrientation);
+  }
+}
+
+// Try to enable on user interaction
+window.addEventListener('click', enableMotionIfNeeded, { once: true });
+
+// Resize
+window.addEventListener('resize', ()=> {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// Animation / physics loop
+const timeStep = 1/60;
+let lastTime;
+function removeBallAtIndex(i) {
+  const b = bodies[i];
+  const m = meshes[i];
+  try { world.removeBody(b); } catch (e) {}
+  try { scene.remove(m); } catch (e) {}
+  bodies.splice(i,1);
+  meshes.splice(i,1);
+}
+
+function clampVec3(v, maxLen) {
+  const l = Math.hypot(v.x, v.y, v.z);
+  if (l > maxLen) {
+    v.x *= maxLen / l;
+    v.y *= maxLen / l;
+    v.z *= maxLen / l;
+  }
+}
+
+function animate(time) {
+  requestAnimationFrame(animate);
+  if (lastTime !== undefined) {
+    const dt = Math.min((time - lastTime) / 1000, 0.05);
+    // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
+    world.step(timeStep, dt, 10);
+
+    // update kinematic flippers: smoothly approach target angle
+    for (const f of flippers) {
+      const diff = f.targetAngle - f.angle;
+      const step = Math.sign(diff) * Math.min(Math.abs(diff), f.angularSpeed * dt);
+      f.angle += step;
+      const q = new CANNON.Quaternion();
+      q.setFromEuler(0, f.angle, 0, 'XYZ');
+      f.body.quaternion.copy(q);
+      f.mesh.position.copy(f.body.position);
+      f.mesh.quaternion.copy(f.body.quaternion);
+    }
+
+    // sync balls and other meshes, guard against invalid values
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      const m = meshes[i];
+      // clamp velocities to avoid numerical explosion
+      if (b.velocity) clampVec3(b.velocity, 50);
+      if (b.angularVelocity) clampVec3(b.angularVelocity, 30);
+
+      const { x, y, z } = b.position;
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+        console.warn('Removing ball with invalid position', b.position);
+        removeBallAtIndex(i);
+        continue;
+      }
+      // if ball falls far below the table, remove it to avoid invisible runaway
+      if (y < -20) {
+        removeBallAtIndex(i);
+        continue;
+      }
+      m.position.copy(b.position);
+      m.quaternion.copy(b.quaternion);
+    }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  lastTime = time;
+}
+requestAnimationFrame(animate);
+
+// expose some helpers for debugging
+window._pinball = { spawnAtCenter, clearBalls, updateScore };
