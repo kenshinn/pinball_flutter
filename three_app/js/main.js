@@ -255,8 +255,8 @@ function createFlipper(side='left') {
   const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, y, z);
-  // add to visual group so flippers tilt with the table
-  tableGroup.add(mesh);
+  // keep flipper visuals in the scene (not in tableGroup) so copying physics quaternions remains consistent
+  scene.add(mesh);
 
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
   const body = new CANNON.Body({ mass: 0 });
@@ -465,13 +465,6 @@ if (enableBtn) {
 // Try to enable on any user interaction (some browsers require a user gesture for permission popups)
 window.addEventListener('click', enableMotionIfNeeded, { once: true });
 
-function handleMotion(event) {
-  // devicemotion provides accelerationIncludingGravity etc.
-  lastMotionTs = performance.now();
-  updateMotionStatus('motion event');
-  // No direct mapping used here; prefer deviceorientation for gravity mapping
-}
-
 // show warning if no motion events after a short while
 setInterval(()=>{
   if (!motionStatusEl) return;
@@ -480,6 +473,17 @@ setInterval(()=>{
     updateMotionStatus('no recent motion events');
   }
 }, 1500);
+
+// Global error handler to surface runtime issues to the UI (helps Android debugging)
+window.addEventListener('error', (ev) => {
+  console.error('Window error', ev.error || ev.message);
+  try { if (motionStatusEl) motionStatusEl.textContent = `Motion: error`; } catch (e) {}
+});
+
+window.addEventListener('unhandledrejection', (ev) => {
+  console.error('Unhandled promise rejection', ev.reason);
+  try { if (motionStatusEl) motionStatusEl.textContent = `Motion: error`; } catch (e) {}
+});
 
 // Resize
 window.addEventListener('resize', ()=> {
