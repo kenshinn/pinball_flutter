@@ -623,11 +623,21 @@ function animate(time) {
           const target = f.targetAngle;
           const maxMove = f.angularSpeed * dt;
           const diff = target - cur;
+          let newAngle;
           if (Math.abs(diff) <= maxMove) {
-            f.angle = target;
+            newAngle = target;
           } else {
-            f.angle = cur + Math.sign(diff) * maxMove;
+            newAngle = cur + Math.sign(diff) * maxMove;
           }
+          // compute angular velocity (rad/s) and store for collision impulse calculation
+          if (dt > 0) {
+            f.angularVel = (newAngle - (typeof f.prevAngle === 'number' ? f.prevAngle : cur)) / dt;
+          } else {
+            f.angularVel = 0;
+          }
+          f.prevAngle = newAngle;
+          f.angle = newAngle;
+
           // set body quaternion around Y axis
           try {
             f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), f.angle);
