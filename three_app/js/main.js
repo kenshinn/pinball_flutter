@@ -129,8 +129,7 @@ function addWall(pos, quat, size, options = {}) {
     if (typeof tableGroup !== 'undefined') tableGroup.add(mesh); else scene.add(mesh);
   }
 
-  // register for table sync
-  tableObjects.push({ body, mesh, localPos: { x: pos.x, y: pos.y, z: pos.z }, localEuler: { x: quat.x, y: quat.y, z: quat.z } });
+
 }
 
 
@@ -189,8 +188,7 @@ function createBumper(x,z,r=0.6, points=100) {
   body.material = bumperMaterial; // use shared bumper material
   world.addBody(body);
 
-  // register bumper for table sync
-  tableObjects.push({ body, mesh, localPos: { x: x, y: bedY + height/2, z: z }, localEuler: { x: 0, y: 0, z: Math.PI/2 } });
+
 
   // collision scoring + debug log
   body.addEventListener('collide', (e) => {
@@ -304,8 +302,7 @@ function createFlipper(side='left') {
   body.position.set(x, y, z);
   world.addBody(body);
 
-  // register flipper for table sync
-  tableObjects.push({ body, mesh, localPos: { x: x, y: y, z: z }, localEuler: { x: 0, y: 0, z: 0 } });
+
 
   // keep the visual mesh slightly above the bed to avoid z-fighting
   mesh.position.set(x, y + 0.01, z);
@@ -589,8 +586,6 @@ function animate(time) {
 
   if (lastTime !== undefined) {
     const dt = Math.min((time - lastTime) / 1000, 0.05);
-    // ensure static/kinematic table objects follow the visual table rotation so physics matches visuals
-    syncTableObjects();
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
 
