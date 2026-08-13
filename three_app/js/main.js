@@ -272,6 +272,21 @@ function createFlipper(side='left') {
 createFlipper('left');
 createFlipper('right');
 
+// Add short side-guards near the flippers so balls can't roll out the sides
+(function addSideGuards(){
+  const guardHeight = 1.0;
+  const guardThicknessX = 0.6; // width across X
+  const guardDepthZ = 2.4;     // length along Z to cover the flipper area
+  const guardZ = tableSize.h/2 - 0.9; // near the bottom (flipper) region
+  const guardY = bedY + guardHeight/2; // sit on top of the bed
+  const guardX = tableSize.w/2 - 0.6; // place close to the side edges but inside the main side wall
+
+  // left guard
+  addWall({ x: -guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
+  // right guard
+  addWall({ x: guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
+})();
+
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
