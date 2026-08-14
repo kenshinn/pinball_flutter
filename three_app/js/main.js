@@ -587,6 +587,10 @@ function updateDebug(now) {
   window._pinball.setOffset = setOffset;
 
   // initial info update
+  const _stored = loadStoredOffsets ? loadStoredOffsets() : null;
+  if (_stored) {
+    try { if (typeof _stored.left === 'number') setOffset('left', _stored.left); if (typeof _stored.right === 'number') setOffset('right', _stored.right); } catch(e){}
+  }
   setTimeout(updateInfo, 300);
 })();
 
