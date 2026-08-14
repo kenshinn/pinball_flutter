@@ -75,7 +75,6 @@ function registerTableObject(body, mesh) {
 }
 
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 8, 12);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -91,6 +90,28 @@ scene.add(dir);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI / 2.1;
+
+// Frame the whole table with a mostly top-down view, adapting to the viewport
+// aspect ratio so the full playfield stays visible (fixes mobile/portrait zoom-in).
+function fitCamera() {
+  const aspect = window.innerWidth / window.innerHeight;
+  camera.aspect = aspect;
+  const vFov = camera.fov * Math.PI / 180;
+  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
+  const halfX = 5.5; // playfield half-width  + margin
+  const halfZ = 8.0; // playfield half-length + margin
+  const distForZ = halfZ / Math.tan(vFov / 2);
+  const distForX = halfX / Math.tan(hFov / 2);
+  const dist = Math.max(distForZ, distForX) * 1.06;
+  const el = THREE.MathUtils.degToRad(68); // elevation above horizontal (mostly top-down)
+  const target = new THREE.Vector3(0, 0, 0.5);
+  camera.position.set(target.x, target.y + dist * Math.sin(el), target.z + dist * Math.cos(el));
+  camera.lookAt(target);
+  camera.updateProjectionMatrix();
+  controls.target.copy(target);
+  controls.update();
+}
+fitCamera();
 
 // Physics
 // Simulate a tilted pinball table: a constant downhill pull toward the flippers (+Z)
@@ -875,9 +896,8 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 // Resize
 window.addEventListener('resize', ()=> {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  fitCamera();
 });
 
 // --- Visual feedback: floating score popups + brief screen flash ---
