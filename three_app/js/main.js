@@ -122,6 +122,12 @@ function updateScore(v) {
   if (scoreEl) scoreEl.textContent = `Score: ${score}`;
 }
 
+// Game state (balls = lives). UI + game-over overlay are wired up later in the file.
+let ballsLeft = 3;
+let gameOver = false;
+let highScore = 0;
+try { highScore = parseInt(localStorage.getItem('PINBALL_HIGH') || '0', 10) || 0; } catch (e) {}
+
 // Audio (simple collision sound)
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 function playPing(freq = 440, duration = 0.08) {
@@ -309,6 +315,8 @@ function clearBalls() {
 // Drop the ball into the upper playfield (just below the top ramp) so it rolls
 // down through the bumpers toward the flippers, instead of appearing dead-centre.
 function spawnAtCenter() {
+  // one ball in play at a time (a new ball is launched only after the current one drains)
+  if (gameOver || ballsLeft <= 0 || bodies.length > 0) return;
   spawnBall({ x: -0.6, y: 4, z: -1.5 });
 }
 
@@ -683,6 +691,7 @@ if (rightBtn) {
 renderer.domElement.addEventListener('pointerdown', (e) => {
   // avoid triggering when clicking UI buttons
   if (e.target && (e.target.id === 'left-flip' || e.target.id === 'right-flip' || e.target.id === 'spawn' || e.target.id === 'clear')) return;
+  if (gameOver || ballsLeft <= 0 || bodies.length > 0) return; // one ball in play at a time
 
   const rect = renderer.domElement.getBoundingClientRect();
   mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -910,6 +919,58 @@ function showScorePopup(wx, wy, wz, points) {
   setTimeout(() => { try { fxLayer.removeChild(el); } catch (e) {} }, 760);
 }
 
+// --- Game structure: balls (lives) HUD, drain handling, game over, high score ---
+const scoreRow = scoreEl ? scoreEl.parentNode : null;
+const ballsEl = document.createElement('div');
+ballsEl.id = 'balls';
+Object.assign(ballsEl.style, { fontWeight: '700', padding: '6px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '8px' });
+const highEl = document.createElement('div');
+highEl.id = 'high';
+Object.assign(highEl.style, { fontWeight: '700', padding: '6px 10px', background: 'rgba(255,255,255,0.06)', borderRadius: '8px' });
+if (scoreRow && scoreEl) { scoreRow.insertBefore(ballsEl, scoreEl.nextSibling); scoreRow.insertBefore(highEl, ballsEl.nextSibling); }
+function updateBallsUI() { if (ballsEl) ballsEl.textContent = `Balls: ${ballsLeft}`; }
+function updateHighUI() { if (highEl) highEl.textContent = `High: ${highScore}`; }
+updateBallsUI();
+updateHighUI();
+
+const gameOverEl = document.createElement('div');
+Object.assign(gameOverEl.style, { position: 'fixed', inset: '0', display: 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px', background: 'rgba(0,0,0,0.62)', color: '#fff', zIndex: 60, fontFamily: 'system-ui, sans-serif' });
+const goTitle = document.createElement('div');
+goTitle.textContent = 'GAME OVER';
+Object.assign(goTitle.style, { font: '800 34px system-ui, sans-serif', letterSpacing: '2px' });
+const goScore = document.createElement('div');
+Object.assign(goScore.style, { fontSize: '18px' });
+const newBtn = document.createElement('button');
+newBtn.textContent = 'New Game';
+Object.assign(newBtn.style, { padding: '10px 20px', borderRadius: '10px', border: '0', background: '#66d9ff', color: '#002', fontWeight: '700', fontSize: '16px', cursor: 'pointer' });
+gameOverEl.append(goTitle, goScore, newBtn);
+if (document.body) document.body.appendChild(gameOverEl);
+newBtn.addEventListener('click', newGame);
+
+function onBallDrained() {
+  if (gameOver) return;
+  ballsLeft = Math.max(0, ballsLeft - 1);
+  updateBallsUI();
+  playPing(150, 0.25); // low "ball lost" tone
+  if (ballsLeft <= 0) endGame();
+}
+function endGame() {
+  gameOver = true;
+  if (score > highScore) { highScore = score; try { localStorage.setItem('PINBALL_HIGH', String(highScore)); } catch (e) {} }
+  updateHighUI();
+  goScore.textContent = `Score ${score}   \u00b7   High ${highScore}`;
+  gameOverEl.style.display = 'flex';
+}
+function newGame() {
+  clearBalls();
+  score = 0;
+  if (scoreEl) scoreEl.textContent = 'Score: 0';
+  ballsLeft = 3;
+  gameOver = false;
+  updateBallsUI();
+  gameOverEl.style.display = 'none';
+}
+
 // Animation / physics loop
 const timeStep = 1/60;
 let lastTime;
@@ -1022,9 +1083,10 @@ function animate(time) {
         removeBallAtIndex(i);
         continue;
       }
-      // if ball falls far below the table, remove it to avoid invisible runaway
-      if (y < -20) {
+      // ball fell off the bottom (drain) — remove it and lose a ball
+      if (y < -4) {
         removeBallAtIndex(i);
+        onBallDrained();
         continue;
       }
       // Pop bumpers: if the ball is within a bumper's trigger zone, kick it out
