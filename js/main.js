@@ -93,7 +93,10 @@ controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI / 2.1;
 
 // Physics
-const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0) });
+// Simulate a tilted pinball table: a constant downhill pull toward the flippers (+Z)
+// so balls naturally roll down toward the bottom of the table.
+const TABLE_INCLINE_G = 3.0;
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, TABLE_INCLINE_G) });
 world.broadphase = new CANNON.NaiveBroadphase();
 world.solver.iterations = 20; // a bit higher for stability
 
@@ -313,101 +316,69 @@ function spawnAtCenter() {
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 
-// Flippers (kinematic bodies animated) — simple, stable model (restoring A)
+// Flippers — kinematic bodies that swing horizontally around the vertical (Y) axis.
 const flippers = [];
 function createFlipper(side='left') {
   const isLeft = side === 'left';
-  // flipper geometry: length (x), height (vertical), thickness (z)
-  const length = 2.6;
-  const thickness = 0.2;
-  const height = 0.48;
-  const x = isLeft ? -2.2 : 2.2;
-  const z = tableSize.h/2 - 0.6;
-  const y = bedY + 0.32;
+  // flipper blade geometry: length (along local X), height (vertical Y), thickness (Z)
+  const length = 2.4;
+  const thickness = 0.45;
+  const height = 0.4;
 
+  // pivot sits near the bottom side edge; the blade extends toward the table centre
+  const pivotX = isLeft ? -2.6 : 2.6;
+  const pivotZ = tableSize.h/2 - 0.9;
+  const pivotY = bedY + height/2; // blade bottom rests flush on the bed surface
+
+  // offset from the pivot (= body origin) to the centre of the blade box
+  const shapeOffset = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
+
+  // Visual mesh: translate the box geometry so the pivot end sits at the local origin,
+  // then the mesh transform can share the physics body's position/quaternion directly.
   const geo = new THREE.BoxGeometry(length, height, thickness);
+  geo.translate(shapeOffset.x, shapeOffset.y, shapeOffset.z);
   const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, y, z);
+  mesh.position.set(pivotX, pivotY, pivotZ);
   scene.add(mesh);
 
-  // Dynamic (rigid) flipper body — try treating as a steel/dynamic body with hinge constraint
+  // Kinematic physics body: rotates cleanly about the pivot and imparts momentum to balls
+  // via its angular velocity (set each frame in the animation loop).
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
-  // dynamic body centered at flipper center
-  const body = new CANNON.Body({ mass: 3 }); // heavier to act like steel
-  body.addShape(shape);
-  body.position.set(x, y, z);
+  const body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC });
+  body.addShape(shape, shapeOffset);
+  body.position.set(pivotX, pivotY, pivotZ);
   body.material = bumperMaterial;
-  body.angularDamping = 0.4;
   world.addBody(body);
 
-  // pivot (static) at inner end toward the center of the table
-  const pivotX = x + (isLeft ? (length/2) : (-length/2));
-  const pivot = new CANNON.Body({ mass: 0 });
-  pivot.position.set(pivotX, y, z);
-  world.addBody(pivot);
+  // Rest / engaged angles around the Y axis (radians); the pair forms a V at rest.
+  const restAngle = isLeft ? -0.5 : 0.5;
+  const upAngle   = isLeft ?  0.5 : -0.5;
 
-  // hinge around Y axis, pivotB is expressed in body-local coordinates (from body center to pivot)
-  const axis = new CANNON.Vec3(0,0,1);
-  const pivotB = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
-  const hinge = new CANNON.HingeConstraint(pivot, body, {
-    pivotA: new CANNON.Vec3(0,0,0), axisA: axis,
-    pivotB: pivotB, axisB: axis,
-    maxForce: 1e7
-  });
-  world.addConstraint(hinge);
+  // apply the rest orientation immediately (body + visual)
+  const q0 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), restAngle);
+  body.quaternion.set(q0.x, q0.y, q0.z, q0.w);
+  mesh.quaternion.copy(q0);
 
-  const restAngle = isLeft ? -0.45 : 0.45;
-  const upAngle = isLeft ? 1.05 : -1.05;
+  const state = {
+    body, mesh, side, shapeOffset,
+    restAngle, upAngle,
+    angle: restAngle, targetAngle: restAngle,
+    angularSpeed: 18, // sweep speed (rad/s)
+    engaged: false,
+    hingeVisualOffset: 0,
+  };
 
-  try {
-    if (typeof hinge.setLimits === 'function') {
-      hinge.setLimits(Math.min(restAngle, upAngle), Math.max(restAngle, upAngle), 0.9, 0.3);
-    }
-    hinge.disableMotor && hinge.disableMotor();
-    hinge.setMotorSpeed && hinge.setMotorSpeed(0);
-    if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e6;
-  } catch (err) { console.warn('hinge setup failed', err); }
-
-  // load persisted visual offset (if user tuned it) and compute physical starting angles
-  const _storedOffsets = (typeof localStorage !== 'undefined') ? (function(){ try { const r = localStorage.getItem('HINGE_VISUAL_OFFSETS'); return r ? JSON.parse(r) : null;} catch(e){return null;} })() : null;
-  const defaultVisOffset = _storedOffsets ? (_storedOffsets[isLeft ? 'left' : 'right'] || 0) : 0;
-
-  // Ensure the flipper starts at its rest angle (both physics body and visual mesh)
-  try {
-    // physics body should be set to the physical angle = visual restAngle - visualOffset
-    const physRest = restAngle - (defaultVisOffset || 0);
-    const physTq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), physRest);
-    // set physics body quaternion
-    try { body.quaternion.set(physTq.x, physTq.y, physTq.z, physTq.w); } catch(e) { /* fallback ignored */ }
-    // reposition body so pivot aligns correctly: body.position = pivot.position - rotated(pivotB)
-    try {
-      const pivotPos = pivot.position; // CANNON.Vec3
-      const localPivotB = new THREE.Vector3(pivotB.x, pivotB.y, pivotB.z);
-      const worldPivotOffset = localPivotB.clone().applyQuaternion(physTq);
-      const bodyWorldPos = new THREE.Vector3(pivotPos.x - worldPivotOffset.x, pivotPos.y - worldPivotOffset.y, pivotPos.z - worldPivotOffset.z);
-      body.position.set(bodyWorldPos.x, bodyWorldPos.y, bodyWorldPos.z);
-    } catch (e) { /* best-effort, ignore */ }
-    // set mesh quaternion & position for visual match (visual uses restAngle)
-    try { const visTq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), restAngle); mesh.quaternion.copy(visTq); mesh.position.set(body.position.x, body.position.y, body.position.z); } catch(e) { /* ok */ }
-  } catch (err) { console.warn('initial flipper quaternion set failed', err); }
-
-  const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: 12, downSpeed: 8 };
-  // apply default visual offset so other code can rely on it
-  state.hingeVisualOffset = defaultVisOffset || 0;
-
-  // small assist impulse on collision while flipper is actively driving (helps counter tunneling)
+  // assist impulse while the flipper is actively swinging (helps counter tunneling)
   body.addEventListener && body.addEventListener('collide', (e) => {
     try {
       if (e.body && e.body._isBall && state.engaged) {
         const ball = e.body;
-        // try to use contact normal if available
         const contact = e.contact || null;
-        let nx = 0, ny = 1, nz = 0;
+        let nx = 0, ny = 0, nz = -1;
         if (contact && contact.ni) { nx = contact.ni.x; ny = contact.ni.y; nz = contact.ni.z; }
-        const mass = ball.mass || 1;
-        const impMag = Math.min(12, 6 + Math.abs(state.upSpeed));
-        const imp = new CANNON.Vec3(nx * impMag, ny * impMag * 0.6, nz * impMag);
+        const impMag = Math.min(14, 8 + Math.abs(state.angularSpeed) * 0.3);
+        const imp = new CANNON.Vec3(nx * impMag, Math.max(0, ny) * impMag * 0.3, nz * impMag);
         if (ball.applyImpulse) ball.applyImpulse(imp, ball.position);
         playPing(420 + Math.random()*120, 0.04);
       }
@@ -415,9 +386,6 @@ function createFlipper(side='left') {
   });
 
   flippers.push(state);
-  // register pivot and body so they tilt with the table visually and keep physics anchored
-  registerTableObject(pivot, null);
-  registerTableObject(body, mesh);
 }
 
 createFlipper('left');
@@ -484,7 +452,8 @@ function updateDebug(now) {
   const panel = document.createElement('div');
   panel.style.position = 'fixed';
   panel.style.left = '12px';
-  panel.style.bottom = '12px';
+  // sit above the bottom flipper touch buttons so it doesn't cover the left (◀) button
+  panel.style.bottom = '84px';
   panel.style.zIndex = 99999;
   panel.style.background = 'rgba(0,0,0,0.55)';
   panel.style.color = '#9fd';
@@ -738,7 +707,8 @@ function handleOrientation(event) {
   const beta = event.beta || 0; // front-back
   const gx = Math.sin(gamma * Math.PI/180) * 9.82;
   const gz = Math.sin(beta * Math.PI/180) * 9.82;
-  world.gravity.set(gx, -9.82, gz);
+  // keep the base table incline so the ball still rolls toward the flippers
+  world.gravity.set(gx, -9.82, gz + TABLE_INCLINE_G);
 
   // update debug status and timestamp
   lastMotionTs = performance.now();
@@ -845,7 +815,8 @@ function handleMotion(event) {
   // assume device X -> world X, device Y -> world Z (forward), and device Z -> up
   const gx = ax * scale;
   const gz = ay * scale;
-  world.gravity.set(gx, -9.82, gz);
+  // keep the base table incline so the ball still rolls toward the flippers
+  world.gravity.set(gx, -9.82, gz + TABLE_INCLINE_G);
 
   updateDiagnostics(detectMotionAPIs() + ` | a:${ax.toFixed(2)},${ay.toFixed(2)},${az.toFixed(2)}`);
   console.debug('DeviceMotion derived gravity', { ax, ay, az, gx, gz });
@@ -938,15 +909,10 @@ function animate(time) {
           f.prevAngle = cur;
           f.angle = newAngle;
           f.angularVel = angVel;
-          // set body quaternion and angular velocity so the physics step sees the motion
-          try {
-            // include visual offset so kinematic angle matches the physics body orientation used at creation
-            const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle + (f.hingeVisualOffset||0));
-            f.body.quaternion.set(q.x, q.y, q.z, q.w);
-          } catch (e) {
-            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle + (f.hingeVisualOffset||0));
-            f.body.quaternion.set(tq.x, tq.y, tq.z, tq.w);
-          }
+          // rotate the kinematic body about the vertical (Y) axis and expose its angular
+          // velocity so the physics step imparts momentum to any balls it sweeps.
+          const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), f.angle);
+          f.body.quaternion.set(q.x, q.y, q.z, q.w);
           f.body.angularVelocity.set(0, angVel, 0);
         }
       } catch (err) { console.warn('pre-step flipper update error', err); }
@@ -965,16 +931,9 @@ function animate(time) {
     for (const f of flippers) {
       try {
         if (f.shapeOffset) {
-          // after physics step, position mesh according to body quaternion
-          let rotated = null;
-          try {
-            rotated = f.body.quaternion.vmult(f.shapeOffset);
-            f.mesh.position.set(f.body.position.x + rotated.x, f.body.position.y + rotated.y + 0.01, f.body.position.z + rotated.z);
-            f.mesh.quaternion.set(f.body.quaternion.x, f.body.quaternion.y, f.body.quaternion.z, f.body.quaternion.w);
-          } catch (e) {
-            f.mesh.position.copy(f.body.position);
-            f.mesh.quaternion.copy(f.body.quaternion);
-          }
+          // geometry is translated to the pivot origin, so mesh shares the body transform
+          f.mesh.position.copy(f.body.position);
+          f.mesh.quaternion.copy(f.body.quaternion);
           continue;
         }
 
