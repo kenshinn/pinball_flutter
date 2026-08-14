@@ -374,8 +374,16 @@ function createFlipper(side='left') {
     const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), restAngle);
     // set physics body quaternion
     try { body.quaternion.set(tq.x, tq.y, tq.z, tq.w); } catch(e) { /* fallback ignored */ }
-    // set mesh quaternion for visual match
-    try { mesh.quaternion.copy(tq); } catch(e) { /* ok */ }
+    // reposition body so pivot aligns correctly: body.position = pivot.position - rotated(pivotB)
+    try {
+      const pivotPos = pivot.position; // CANNON.Vec3
+      const localPivotB = new THREE.Vector3(pivotB.x, pivotB.y, pivotB.z);
+      const worldPivotOffset = localPivotB.clone().applyQuaternion(tq);
+      const bodyWorldPos = new THREE.Vector3(pivotPos.x - worldPivotOffset.x, pivotPos.y - worldPivotOffset.y, pivotPos.z - worldPivotOffset.z);
+      body.position.set(bodyWorldPos.x, bodyWorldPos.y, bodyWorldPos.z);
+    } catch (e) { /* best-effort, ignore */ }
+    // set mesh quaternion & position for visual match
+    try { mesh.quaternion.copy(tq); mesh.position.set(body.position.x, body.position.y, body.position.z); } catch(e) { /* ok */ }
   } catch (err) { console.warn('initial flipper quaternion set failed', err); }
 
   const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: 12, downSpeed: 8 };
@@ -436,11 +444,21 @@ function updateDebug(now) {
       if (f.hinge && typeof f.hinge.getAngle === 'function') ang = f.hinge.getAngle();
       else if (typeof f.angle === 'number') ang = f.angle;
       const deg = (ang * 180 / Math.PI).toFixed(1);
-      lines.push(`${f.side}: ${deg}° ${f.engaged? 'ENG':'   '}`);
+      const pivotPos = f.pivot ? `${f.pivot.position.x.toFixed(2)},${f.pivot.position.y.toFixed(2)},${f.pivot.position.z.toFixed(2)}` : 'n/a';
+      const bodyPos = f.body ? `${f.body.position.x.toFixed(2)},${f.body.position.y.toFixed(2)},${f.body.position.z.toFixed(2)}` : 'n/a';
+      const meshPos = f.mesh ? `${f.mesh.position.x.toFixed(2)},${f.mesh.position.y.toFixed(2)},${f.mesh.position.z.toFixed(2)}` : 'n/a';
+      const hingeMotor = f.hinge && typeof f.hinge.enableMotor === 'function' ? (f.hinge.motorEnabled ? 'on' : 'off') : 'n/a';
+      lines.push(`${f.side}: ${deg}° ${f.engaged? 'ENG':'   '} | pivot ${pivotPos} | body ${bodyPos} | mesh ${meshPos} | motor ${hingeMotor}`);
     } catch (e) { lines.push(`${f.side}: err`); }
   }
   debugEl.innerText = lines.join('\n');
 }
+
+// hook debug updater to animation frame
+(function attachDebugLoop(){
+  const obs = (t)=>{ updateDebug(t); requestAnimationFrame(obs); };
+  requestAnimationFrame(obs);
+})();
 
 // initial dump for diagnostics
 for (const f of flippers) {
