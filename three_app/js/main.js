@@ -301,6 +301,23 @@ createBumper(-1.8, -2.2, 0.6, 100);
 createBumper( 1.8, -2.2, 0.6, 100);
 createBumper( 0.0, -3.8, 0.6, 150);
 
+// Corner kickers: if the ball wanders into a dead top corner, fire it back toward
+// the lower-centre (with random spread) plus points + FX, so corners aren't boring.
+const KICKER_RADIUS = 1.5;
+const KICKER_POP = 16;
+const KICKER_SPREAD = 0.5; // max launch-angle jitter (radians, ~29 deg)
+const kickers = [
+  { x: -(tableSize.w / 2 + 0.2), z: -tableSize.h / 2 + 1.6, points: 250, flash: 0 },
+  { x:  (tableSize.w / 2 + 0.2), z: -tableSize.h / 2 + 1.6, points: 250, flash: 0 },
+];
+for (const K of kickers) {
+  const mat = new THREE.MeshStandardMaterial({ color: 0x33ffcc, emissive: 0x0affcc, emissiveIntensity: 0.4, transparent: true, opacity: 0.55 });
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(KICKER_RADIUS * 0.7, KICKER_RADIUS * 0.7, 0.12, 28), mat);
+  mesh.position.set(K.x, bedY + 0.07, K.z);
+  tableGroup.add(mesh);
+  K.mesh = mesh; K.mat = mat;
+}
+
 // Ball spawn
 let ballCount = 0;
 function spawnBall(pos) {
@@ -371,7 +388,7 @@ function createFlipper(side='left') {
   // flipper blade geometry: length (along local X), height (vertical Y), thickness (Z)
   const length = 2.4;
   const thickness = 0.45;
-  const height = 0.4;
+  const height = 0.9; // tall enough to cover the whole ball so hits push it sideways, not up
 
   // pivot sits near the bottom side edge; the blade extends toward the table centre
   const pivotX = isLeft ? -2.6 : 2.6;
@@ -1197,6 +1214,29 @@ function animate(time) {
         const dz = b.position.z - bp.body.position.z;
         if (Math.hypot(dx, dz) < bp.r + 0.35 + 0.12) hitBumper(bp, b);
       }
+      // Corner kickers: shoot the ball back into play from a dead top corner,
+      // aimed at the lower-centre with a random spread so it's less predictable.
+      b._kickerAt = b._kickerAt || {};
+      const nowK = performance.now();
+      for (let ki = 0; ki < kickers.length; ki++) {
+        const K = kickers[ki];
+        if (Math.hypot(b.position.x - K.x, b.position.z - K.z) < KICKER_RADIUS) {
+          if (nowK - (b._kickerAt[ki] || 0) > 400) {
+            b._kickerAt[ki] = nowK;
+            let bx = 0 - K.x, bz = 2 - K.z; const bl = Math.hypot(bx, bz) || 1; bx /= bl; bz /= bl;
+            const jitter = (Math.random() - 0.5) * 2 * KICKER_SPREAD; // random launch angle
+            const cs = Math.cos(jitter), sn = Math.sin(jitter);
+            const rx = bx * cs - bz * sn, rz = bx * sn + bz * cs;
+            const pop = KICKER_POP * (0.85 + Math.random() * 0.3); // slight random power
+            if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3(rx * pop, 0, rz * pop), b.position);
+            updateScore(K.points);
+            showScorePopup(K.x, bedY + 0.6, K.z, K.points);
+            triggerScreenFlash(0.14);
+            playPing(320 + Math.random() * 160, 0.12);
+            K.flash = 1;
+          }
+        }
+      }
       m.position.copy(b.position);
       m.quaternion.copy(b.quaternion);
     }
@@ -1207,6 +1247,13 @@ function animate(time) {
       const s = 1 + bp.flash * 0.3;
       bp.mesh.scale.set(s, 1, s);
       if (bp.mat) bp.mat.emissiveIntensity = 0.12 + bp.flash * 2.0;
+    }
+    // decay corner-kicker pad pulse
+    for (const K of kickers) {
+      if (K.flash > 0) K.flash = Math.max(0, K.flash - dt * 3);
+      if (K.mat) K.mat.emissiveIntensity = 0.4 + K.flash * 2.5;
+      const ks = 1 + K.flash * 0.2;
+      if (K.mesh) K.mesh.scale.set(ks, 1, ks);
     }
     // expire the combo multiplier if no bumper was hit within the window
     if (combo > 0 && performance.now() - lastComboAt > COMBO_WINDOW_MS) { combo = 0; updateComboUI(1); }
