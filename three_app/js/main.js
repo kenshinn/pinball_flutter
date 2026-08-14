@@ -191,10 +191,14 @@ floorMesh.receiveShadow = true;
 // add to tableGroup so visuals tilt together
 tableGroup.add(floorMesh);
 
-// Side walls (left and right only)
-// side walls: physics only (visuals hidden so they don't block flipper visuals)
-addWall({x:-tableSize.w/2 -1, y:2.5, z:0}, {x:0,y:0,z:0}, {x:1, y:5, z:tableSize.h}, { visual: false });
-addWall({x:tableSize.w/2 +1, y:2.5, z:0}, {x:0,y:0,z:0}, {x:1, y:5, z:tableSize.h}, { visual: false });
+// Side rails (left and right) — short visible walls that sit ON the bed so balls
+// can't roll off the sides. (The previous walls floated above the bed with their
+// bottom at y=0, letting low-rolling balls slip underneath.)
+const sideRailHeight = 1.0;
+const sideRailThickness = 0.5;
+const sideRailX = tableSize.w/2 + 0.75; // sits along the visible floor edge
+addWall({ x: -sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
+addWall({ x:  sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
 
 // Ramp wall kept at the TOP (opposite the flippers) to keep balls in play
 // Move it to the negative z side so it doesn't block flippers at the bottom.
