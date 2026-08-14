@@ -19,7 +19,7 @@
     button{padding:6px 10px;border-radius:6px;border:0;background:rgba(255,255,255,0.08);color:#fff}
     /* flipper layout: left and right at screen edges */
     #flippers{position:absolute;left:12px;right:12px;bottom:12px;z-index:20;display:flex;justify-content:space-between;max-width:900px;margin:0 auto;padding:0 12px}
-    .flip-btn{padding:10px 14px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.04);color:#fff}
+    .flip-btn{padding:10px 14px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.04);color:#fff;-webkit-user-select:none;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
     #notice{position:absolute;left:12px;bottom:12px;color:#ddd;font-size:12px}
     /* small version badge */
     #version{position:absolute;right:10px;top:6px;font-size:12px;color:#bbb;z-index:30;background:rgba(255,255,255,0.02);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.03)}
@@ -56,8 +56,8 @@
   </div>
 
   <div id="flippers">
-    <button id="left-flip" class="flip-btn">Left</button>
-    <button id="right-flip" class="flip-btn">Right</button>
+    <button id="left-flip" class="flip-btn" aria-label="Left flipper">◀</button>
+    <button id="right-flip" class="flip-btn" aria-label="Right flipper">▶</button>
   </div>
 
   <div id="notice">Click/tap to spawn. On mobile allow motion access to enable tilt.</div>
