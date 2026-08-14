@@ -463,6 +463,113 @@ function updateDebug(now) {
   requestAnimationFrame(obs);
 })();
 
+// small interactive tuner for hinge visual offset (mobile-friendly)
+(function attachHingeTuner(){
+  const panel = document.createElement('div');
+  panel.style.position = 'fixed';
+  panel.style.left = '12px';
+  panel.style.bottom = '12px';
+  panel.style.zIndex = 99999;
+  panel.style.background = 'rgba(0,0,0,0.55)';
+  panel.style.color = '#9fd';
+  panel.style.padding = '8px';
+  panel.style.borderRadius = '8px';
+  panel.style.fontFamily = 'monospace';
+  panel.style.fontSize = '12px';
+  panel.style.display = 'flex';
+  panel.style.gap = '6px';
+  panel.style.alignItems = 'center';
+
+  function mkBtn(text, onClick){
+    const b = document.createElement('button');
+    b.textContent = text;
+    b.style.padding = '6px 8px';
+    b.style.borderRadius = '6px';
+    b.style.border = '1px solid rgba(255,255,255,0.06)';
+    b.style.background = 'rgba(255,255,255,0.02)';
+    b.style.color = '#9fd';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  const leftDec = mkBtn('L -', ()=> adjustOffset('left', -0.1));
+  const leftInc = mkBtn('L +', ()=> adjustOffset('left', 0.1));
+  const rightDec = mkBtn('R -', ()=> adjustOffset('right', -0.1));
+  const rightInc = mkBtn('R +', ()=> adjustOffset('right', 0.1));
+  const reset = mkBtn('Reset', ()=> { setOffset('left', 0); setOffset('right', 0); });
+  const info = document.createElement('div');
+  info.id = 'hinge-tuner-info';
+  info.style.minWidth = '140px';
+
+  panel.appendChild(leftDec);
+  panel.appendChild(leftInc);
+  panel.appendChild(rightDec);
+  panel.appendChild(rightInc);
+  panel.appendChild(reset);
+  panel.appendChild(info);
+
+  document.body.appendChild(panel);
+
+  function setOffset(side, value) {
+    const f = flippers.find(ff=>ff.side===side);
+    if (!f) return;
+    f.hingeVisualOffset = value;
+    applyOffsetToFlipper(f);
+    updateInfo();
+  }
+  function adjustOffset(side, delta) {
+    const f = flippers.find(ff=>ff.side===side);
+    if (!f) return;
+    f.hingeVisualOffset = (f.hingeVisualOffset||0) + delta;
+    applyOffsetToFlipper(f);
+    updateInfo();
+  }
+  function updateInfo(){
+    const l = flippers.find(ff=>ff.side==='left');
+    const r = flippers.find(ff=>ff.side==='right');
+    const lv = l ? (l.hingeVisualOffset||0).toFixed(2) : 'n/a';
+    const rv = r ? (r.hingeVisualOffset||0).toFixed(2) : 'n/a';
+    info.textContent = `offset L:${lv} R:${rv}`;
+  }
+  function applyOffsetToFlipper(f){
+    try{
+      // recompute body & mesh quaternion based on current physical angle + offset
+      let cur = 0;
+      if (f.hinge && typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
+      else if (f.body && f.body.quaternion) {
+        const q = f.body.quaternion;
+        const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+        const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
+        cur = e.z || 0;
+      }
+      const physAngle = cur; // physical hinge angle
+      const visOffset = f.hingeVisualOffset || 0;
+      const total = physAngle + visOffset;
+      // set body quaternion to reflect total orientation used by visual
+      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), total);
+      f.body.quaternion.set(q.x, q.y, q.z, q.w);
+      if (f.mesh) f.mesh.quaternion.copy(q);
+      // reposition mesh so its pivot stays aligned
+      if (f.shapeOffset) {
+        try{
+          const rotated = f.body.quaternion.vmult(f.shapeOffset);
+          f.mesh.position.set(f.body.position.x + rotated.x, f.body.position.y + rotated.y + 0.01, f.body.position.z + rotated.z);
+        }catch(e){}
+      } else if (f.body) {
+        if (f.mesh) f.mesh.position.copy(f.body.position);
+      }
+    }catch(e){console.warn('applyOffsetToFlipper failed', e)}
+  }
+
+  // expose helpers for manual use
+  window._pinball = window._pinball || {};
+  window._pinball.adjustOffset = adjustOffset;
+  window._pinball.setOffset = setOffset;
+
+  // initial info update
+  setTimeout(updateInfo, 300);
+})();
+
 // initial dump for diagnostics
 for (const f of flippers) {
   try {
