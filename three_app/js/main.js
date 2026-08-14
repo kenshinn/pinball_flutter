@@ -348,7 +348,7 @@ function createFlipper(side='left') {
   world.addBody(pivot);
 
   // hinge around Y axis, pivotB is expressed in body-local coordinates (from body center to pivot)
-  const axis = new CANNON.Vec3(0,1,0);
+  const axis = new CANNON.Vec3(0,0,1);
   const pivotB = new CANNON.Vec3(isLeft ? length/2 : -length/2, 0, 0);
   const hinge = new CANNON.HingeConstraint(pivot, body, {
     pivotA: new CANNON.Vec3(0,0,0), axisA: axis,
@@ -371,7 +371,7 @@ function createFlipper(side='left') {
 
   // Ensure the flipper starts at its rest angle (both physics body and visual mesh)
   try {
-    const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), restAngle);
+    const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), restAngle);
     // set physics body quaternion
     try { body.quaternion.set(tq.x, tq.y, tq.z, tq.w); } catch(e) { /* fallback ignored */ }
     // set mesh quaternion for visual match
@@ -439,7 +439,8 @@ function setFlipper(side, engaged) {
           const q = f.body.quaternion;
           const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
           const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
-          cur = e.y || 0;
+          // hinge is around Z axis so the rotation of interest is 'z'
+          cur = e.z || 0;
         }
         let delta = target - cur;
         while (delta > Math.PI) delta -= Math.PI*2;
@@ -725,9 +726,9 @@ function animate(time) {
           f.angularVel = angVel;
           // set body quaternion and angular velocity so the physics step sees the motion
           try {
-            f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,1,0), f.angle);
+            f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,0,1), f.angle);
           } catch (e) {
-            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), f.angle);
+            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle);
             f.body.quaternion.set(tq.x, tq.y, tq.z, tq.w);
           }
           f.body.angularVelocity.set(0, angVel, 0);
