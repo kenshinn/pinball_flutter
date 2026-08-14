@@ -46,3 +46,23 @@ flipper 目前用 **dynamic body + HingeConstraint(繞 Y 軸)** 實作,由 motor
 1. 改 [three_app/js/main.js](three_app/js/main.js) → commit → `git push origin main`。
 2. 等 CI 部署,開 **https://kenshinn.github.io/pinball_flutter/** 驗證(用右上角版本徽章 `vX.Y.Z` 確認是否為最新)。
 3. 桌機用方向鍵 / A、D 控制左右擋板;Space spawn 球。觀察擋板打球的回饋。
+
+---
+
+## 自動版號與部署流程（已設定）
+
+為了快速迭代，我加入了自動在每次推送 main 時遞增 patch 版號的流程，並在部署到 gh-pages 前自動執行：
+
+- 新增腳本：scripts/bump_version.sh
+  - 讀取 three_app/index.html 裡第一個符合 vMAJOR.MINOR.PATCH 的字串
+  - 會把 PATCH 加 1、寫回 index.html，並在 three_app/VERSION.txt 留下新版本字串
+  - 若最後一個 commit 已由 GitHub Actions 自動產生（含 `[auto]`），則會跳過以避免無限迴圈
+- CI: .github/workflows/deploy-gh-pages.yml
+  - 在部署前執行 bump_version.sh（若檔案更新會在 workspace commit）
+  - 將 bump 出來的 commit push 回 main（由 workflow 使用 GITHUB_TOKEN 推送）
+  - 接著把 three_app 資料夾發佈到 gh-pages
+- 發佈時會把新版本寫入 three_app/VERSION.txt 與 three_app/index.html（版本徽章），方便查驗
+
+注意：第一次 run 時 workflow 會 commit 並 push 新版號（commit message 標註 `[auto]`），因此後續工作流會跳過再次自動 bump，避免循環。
+
+如果你要調整版號規則（例如改為 minor bump 或 tag 觸發），我可以把腳本改成 semantic-release 樣式或改為手動標籤觸發。
