@@ -42,6 +42,38 @@ function syncTableObjects() {
   }
 }
 
+// Register an object so it moves with the visual tableGroup rotation.
+// body: CANNON.Body (optional), mesh: THREE.Mesh (optional)
+function registerTableObject(body, mesh) {
+  try {
+    // determine world position/quaternion
+    let worldPos = new THREE.Vector3();
+    let worldQuat = new THREE.Quaternion();
+    if (mesh) {
+      worldPos.copy(mesh.getWorldPosition(new THREE.Vector3()));
+      worldQuat.copy(mesh.getWorldQuaternion(new THREE.Quaternion()));
+    } else if (body && body.position) {
+      worldPos.set(body.position.x, body.position.y, body.position.z);
+      worldQuat.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    } else return;
+
+    // compute local position & rotation relative to tableGroup
+    const localPos = tableGroup.worldToLocal(worldPos.clone());
+    const invTableQuat = tableGroup.quaternion.clone().invert();
+    const localQuat = invTableQuat.multiply(worldQuat);
+    const localEuler = new THREE.Euler().setFromQuaternion(localQuat, 'XYZ');
+
+    tableObjects.push({
+      body: body || null,
+      mesh: mesh || null,
+      localPos: { x: localPos.x, y: localPos.y, z: localPos.z },
+      localEuler: { x: localEuler.x, y: localEuler.y, z: localEuler.z }
+    });
+  } catch (err) {
+    console.warn('registerTableObject error', err);
+  }
+}
+
 const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 8, 12);
 
@@ -212,6 +244,8 @@ function createBumper(x,z,r=0.6, points=100) {
   });
 
   bumpers.push({ body, mesh });
+  // register so bumpers follow visual table tilt (syncTableObjects will update body/mesh)
+  registerTableObject(body, mesh);
 }
 
 createBumper(-2, 0, 0.6, 150);
@@ -356,6 +390,9 @@ function createFlipper(side='left') {
   });
 
   flippers.push(state);
+  // register pivot and body so they tilt with the table visually and keep physics anchored
+  registerTableObject(pivot, null);
+  registerTableObject(body, mesh);
 }
 
 createFlipper('left');
@@ -683,6 +720,10 @@ function animate(time) {
         }
       } catch (err) { console.warn('pre-step flipper update error', err); }
     }
+
+    // Sync registered table objects to the current visual tilt BEFORE stepping physics so
+    // the physics bodies move consistently with the visuals when visualsTiltEnabled.
+    try { syncTableObjects(); } catch(e) { console.warn('syncTableObjects pre-step failed', e); }
 
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
