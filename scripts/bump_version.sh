@@ -22,7 +22,7 @@ NEW="v${MAJ}.${MIN}.${NEW_PATCH}"
 awk -v old="$OLD" -v new="$NEW" 'NR==1{found=0} { if(!found && index($0,old)){sub(old,new,$0); found=1} print }' "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"
 # write VERSION file for easy discovery
 echo "$NEW" > three_app/VERSION.txt
-# commit & push if changed
+# commit if changed
 if git diff --quiet -- "$FILE" >/dev/null 2>&1; then
   echo "NO_CHANGE"
   echo "$NEW"
@@ -33,7 +33,5 @@ git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git add "$FILE" three_app/VERSION.txt
 git commit -m "chore: bump version to $NEW [auto]"
-# push back to the branch that triggered the workflow
-git push origin HEAD:main
-# emit version
+# Emit version for the caller to consume
 echo "$NEW"

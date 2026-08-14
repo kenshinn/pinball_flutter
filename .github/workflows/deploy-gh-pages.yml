@@ -30,6 +30,10 @@ jobs:
           NEW=$(./scripts/bump_version.sh)
           echo "version=$NEW" >> $GITHUB_OUTPUT
 
+      - name: Push bumped version back to main
+        if: steps.bump.outputs.version != 'SKIP'
+        run: git push origin HEAD:main
+
       - name: Show bumped version
         if: steps.bump.outputs.version != 'SKIP'
         run: echo "Bumped version -> ${{ steps.bump.outputs.version }}"
