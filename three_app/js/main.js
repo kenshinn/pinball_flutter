@@ -418,19 +418,22 @@ createFlipper('right');
 // Debug overlay: show flipper hinge angles and states (helpful during development)
 const debugEl = document.createElement('div');
 debugEl.id = 'debug-angles';
-debugEl.style.position = 'absolute';
+// use fixed so it's always visible above the canvas and not affected by the container stacking context
+debugEl.style.position = 'fixed';
 debugEl.style.right = '12px';
 debugEl.style.top = '36px';
-debugEl.style.zIndex = 40;
+debugEl.style.zIndex = 99999;
+debugEl.style.pointerEvents = 'none'; // don't block touches/clicks
 debugEl.style.padding = '6px 10px';
-debugEl.style.background = 'rgba(0,0,0,0.5)';
+debugEl.style.background = 'rgba(0,0,0,0.55)';
 debugEl.style.color = '#9fd';
 debugEl.style.fontSize = '12px';
 debugEl.style.borderRadius = '6px';
 debugEl.style.fontFamily = 'monospace';
+debugEl.style.whiteSpace = 'pre';
 debugEl.innerText = 'flipper debug...';
-const containerEl = document.getElementById('container');
-if (containerEl) containerEl.appendChild(debugEl);
+// append to body so it's visually above the renderer canvas
+if (document && document.body) document.body.appendChild(debugEl);
 
 let _lastDebug = 0;
 function updateDebug(now) {
