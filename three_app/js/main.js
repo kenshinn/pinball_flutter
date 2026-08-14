@@ -510,11 +510,27 @@ function updateDebug(now) {
 
   document.body.appendChild(panel);
 
+  const HINGE_STORE_KEY = 'HINGE_VISUAL_OFFSETS';
+  function loadStoredOffsets(){
+    try{
+      const raw = localStorage.getItem(HINGE_STORE_KEY);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      return obj;
+    }catch(e){return null}
+  }
+  function saveStoredOffsets(left, right){
+    try{ localStorage.setItem(HINGE_STORE_KEY, JSON.stringify({left, right})); }catch(e){}
+  }
   function setOffset(side, value) {
     const f = flippers.find(ff=>ff.side===side);
     if (!f) return;
     f.hingeVisualOffset = value;
     applyOffsetToFlipper(f);
+    // persist both values when one changes
+    const l = flippers.find(ff=>ff.side==='left');
+    const r = flippers.find(ff=>ff.side==='right');
+    saveStoredOffsets(l ? (l.hingeVisualOffset||0) : 0, r ? (r.hingeVisualOffset||0) : 0);
     updateInfo();
   }
   function adjustOffset(side, delta) {
@@ -522,6 +538,10 @@ function updateDebug(now) {
     if (!f) return;
     f.hingeVisualOffset = (f.hingeVisualOffset||0) + delta;
     applyOffsetToFlipper(f);
+    // persist
+    const l = flippers.find(ff=>ff.side==='left');
+    const r = flippers.find(ff=>ff.side==='right');
+    saveStoredOffsets(l ? (l.hingeVisualOffset||0) : 0, r ? (r.hingeVisualOffset||0) : 0);
     updateInfo();
   }
   function updateInfo(){
