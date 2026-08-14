@@ -8,38 +8,58 @@
 
 主要檔案:[three_app/js/main.js](three_app/js/main.js)
 
-## 現況與相關程式碼
+## 現況與相關程式碼(2026-08-14 更新:已改寫,見下方變更紀錄)
 
-flipper 目前用 **dynamic body + HingeConstraint(繞 Y 軸)** 實作,由 motor 驅動角度:
+flipper 已從 **dynamic body + HingeConstraint** 改寫為 **kinematic body + 繞垂直 Y 軸旋轉**。
+(舊 hinge 版不穩定:body 會脫離樞紐飛到桌面中央,已整段移除。)
 
-- 建立 flipper:`createFlipper(side)`(約 [三處 main.js#L284](three_app/js/main.js#L284) 起)
-  - 幾何:`length 2.6 / height 0.48 / thickness 0.2`
-  - 樞紐 `pivot`(mass 0)+ `HingeConstraint`,`maxForce 1e7`
-  - 靜止/抬起角:`restAngle ±0.45`、`upAngle ±1.05`
-- 撞擊處理:`body` 的 `collide` 事件(約 [main.js#L340](three_app/js/main.js#L340))
-  - 只有在 `state.engaged`(擋板正在揮動)時,對球施加 assist impulse
-  - impulse 依 contact normal(`contact.ni`)方向,`impMag = min(12, 6 + upSpeed)`
-- 驅動角度:`setFlipper(side, engaged)`(約 [main.js#L379](three_app/js/main.js#L379))
-  - 以 `enableMotor` + `setMotorSpeed` 把角度推向 target
-- 視覺同步:render loop 中 `f.mesh.position/quaternion.copy(f.body...)`(約 [main.js#L691](three_app/js/main.js#L691) 起)
+- 建立 flipper:`createFlipper(side)`(約 [main.js#L316](three_app/js/main.js#L316) 起)
+  - 幾何:`length 2.4 / height 0.4 / thickness 0.45`
+  - `new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC })`,用 `addShape(shape, shapeOffset)` 把樞紐固定在 body 原點(`shapeOffset.x = ±length/2`)→ 樞紐永不漂移
+  - mesh 幾何用 `geo.translate(shapeOffset)` 平移到樞紐原點,因此 mesh 可直接沿用 body 的 position/quaternion(不需再算旋轉偏移)
+  - **貼平面**:`pivotY = bedY + height/2`,擋板底面正好落在 bed 表面(y = -1)
+  - 靜止/抬起角(繞 Y 軸):`restAngle ∓0.5`、`upAngle ±0.5`(左右鏡像,rest 時兩片呈 V 形)
+- 動畫驅動:`animate()` 迴圈的 `f.shapeOffset` 分支
+  - pre-step:朝 `f.targetAngle` 移動 `f.angle`,設 `body.quaternion`(繞 **Y**)+ `body.angularVelocity(0, angVel, 0)`,讓物理步驟把動量傳給球
+  - post-step:`mesh.position/quaternion.copy(body...)`
+- 觸發:`setFlipper(side, engaged)` 走 kinematic fallback,設 `f.targetAngle = engaged ? upAngle : restAngle`
+- 撞擊:body 的 `collide` 事件,`state.engaged` 時對球加 assist impulse(`impMag = min(14, 8 + angularSpeed*0.3)`)
 
-## 已知問題 / 待修
+### 重力(模擬傾斜檯面)
+- 常數 `TABLE_INCLINE_G = 3.0`,`world.gravity = (0, -9.82, +3.0)` → 球會往 **+Z(擋板方向)** 下坡滾。
+- 裝置感測(`handleOrientation` / `handleMotion`)覆寫重力時保留此基礎傾斜:`world.gravity.set(gx, -9.82, gz + TABLE_INCLINE_G)`。
 
-- [ ] **呈現**:flipper mesh 與 physics body 對位、抬起動畫是否平順(檢查 hinge 版與 kinematic fallback 兩條路徑的 mesh 同步)。
-- [ ] **撞擊手感**:球被擋板打擊時的回彈力道/方向;tunneling(高速穿透)問題。
-  - 相關參數:`bumperBallContact.restitution 0.95 / friction 0.015`、`solver.iterations 20`、`world.step(timeStep, dt, 10)` 的 substeps。
-  - assist impulse 目前只在 `engaged` 時觸發,靜止碰撞不加力。
+## 已知問題 / 待辦
+
+- [ ] **遺留微調面板**:`attachHingeTuner` 的 `L± / R± / offset` 面板是舊 hinge-visual-offset 版遺留,**現已無作用**(動畫每幀用 Y 軸覆寫 mesh)。面板已上移(`bottom: 84px`)避免擋到左擋板 ◀ 鈕,但建議整組移除,並清掉 localStorage 的 `HINGE_VISUAL_OFFSETS`(誤觸會污染 debug 顯示的 `vis` 角度,例如出現 `offset L:-0.70`)。
+- [ ] **CI 有兩個衝突的 workflow**(見下方「自動版號與部署流程」段)。
+- [ ] `setFromEuler` 警告:`addWall` 視覺 mesh 呼叫 `mesh.quaternion.setFromEuler(x,y,z,'XYZ')` 傳了數字而非 `THREE.Euler`,console 會噴警告(不影響畫面,可順手修)。
+- [ ] **撞擊手感**:球高速時仍可能 tunneling;可調 `solver.iterations 20`、`world.step(timeStep, dt, 10)` substeps。
 
 ## 可調參數速查
 
 | 目的 | 位置 | 現值 |
 |------|------|------|
-| 擋板重量 | `createFlipper` body mass | 3 |
-| 抬起/落下速度 | `state.upSpeed / downSpeed` | 12 / 8 |
+| 擋板 長/厚/高 | `createFlipper` | 2.4 / 0.45 / 0.4 |
+| 擋板揮動速度 | `state.angularSpeed` | 18 rad/s |
+| rest / up 角(繞 Y) | `createFlipper` | ∓0.5 / ±0.5 |
+| 桌面下坡重力 | `TABLE_INCLINE_G` | 3.0 |
 | 擋板↔球彈性 | `bumperBallContact.restitution` | 0.95 |
-| assist impulse 上限 | `collide` handler `impMag` | 12 |
+| assist impulse 上限 | `collide` handler `impMag` | 14 |
 | 物理迭代 | `world.solver.iterations` | 20 |
 | substeps | `world.step(...)` 第三參數 | 10 |
+
+---
+
+## 變更紀錄(2026-08-14)
+
+本次 session 在 [three_app/js/main.js](three_app/js/main.js) 的修改:
+
+1. **flipper 改寫**:HingeConstraint 動態體 → kinematic 繞 Y 軸旋轉。解決三個問題:(a) 擋板脫離樞紐飛走、(b) 旋轉軸錯誤(原繞 Z 軸往上翻,打不到桌面上的球)、(c) 浮在平面上方。現在繞 Y 軸水平橫掃、底面貼齊桌面、樞紐固定。
+2. **重力**:新增 `TABLE_INCLINE_G` 下坡分量,球會朝擋板滾(原本桌面水平、球不動)。
+3. **UI**:hinge tuner 面板 `bottom 12px → 84px`,避免擋到左擋板觸控鈕。
+
+已用本機 `python3 -m http.server 8000` + 瀏覽器實測驗證(擋板揮動、球下滾撞 bumper 得分)。尚未 commit/push。
 
 ## 驗證方式
 
@@ -66,6 +86,12 @@ flipper 目前用 **dynamic body + HingeConstraint(繞 Y 軸)** 實作,由 motor
 注意：第一次 run 時 workflow 會 commit 並 push 新版號（commit message 標註 `[auto]`），因此後續工作流會跳過再次自動 bump，避免循環。
 
 如果你要調整版號規則（例如改為 minor bump 或 tag 觸發），我可以把腳本改成 semantic-release 樣式或改為手動標籤觸發。
+
+### ⚠️ 已知衝突:有兩個 workflow 同時綁 push → main(2026-08-14 檢查)
+
+- [.github/workflows/deploy-gh-pages.yml](.github/workflows/deploy-gh-pages.yml) — **正確版**,符合預期流程:跑根目錄 [scripts/bump_version.sh](scripts/bump_version.sh) → `git push origin HEAD:main`(版號進 main 並持久累加)→ peaceiris 發佈 `./three_app` 到 gh-pages。
+- [.github/workflows/auto_deploy.yml](.github/workflows/auto_deploy.yml) — **多餘且有 bug,建議刪除**:跑 [three_app/scripts/bump_version.sh](three_app/scripts/bump_version.sh)(該腳本內含 `git push origin gh-pages --force`,會把 main HEAD 直接推到 gh-pages,弄壞網站結構),且**不會把版號 push 回 main**(main 版號永遠停在原點)。與上者並發會 race。
+- **建議**:刪除 `auto_deploy.yml` 與 `three_app/scripts/bump_version.sh`,只保留 `deploy-gh-pages.yml`。(尚未執行,待確認)
 
 ---
 
