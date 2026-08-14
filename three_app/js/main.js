@@ -428,27 +428,32 @@ function setFlipper(side, engaged) {
   // if hinge-based dynamic flipper, drive motor toward target angle
   if (f.hinge) {
     f.engaged = engaged;
-    const target = engaged ? f.upAngle : f.restAngle;
+    // Conservative motor policy: only actively drive the flipper when engaged (pressed).
+    // When released, disable the motor and allow damping/hinge limits to settle the flipper.
     try {
-      let cur = 0;
-      if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
-      else if (f.body && f.body.quaternion) {
-        const q = f.body.quaternion;
-        const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-        const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
-        cur = e.y || 0;
-      }
-      // normalize delta to [-PI,PI]
-      let delta = target - cur;
-      while (delta > Math.PI) delta -= Math.PI*2;
-      while (delta < -Math.PI) delta += Math.PI*2;
-      if (Math.abs(delta) < 0.02) {
+      if (engaged) {
+        const target = f.upAngle;
+        let cur = 0;
+        if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
+        else if (f.body && f.body.quaternion) {
+          const q = f.body.quaternion;
+          const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
+          const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
+          cur = e.y || 0;
+        }
+        let delta = target - cur;
+        while (delta > Math.PI) delta -= Math.PI*2;
+        while (delta < -Math.PI) delta += Math.PI*2;
+        if (Math.abs(delta) < 0.02) {
+          try { f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+          return;
+        }
+        const speed = Math.sign(delta) * Math.abs(f.upSpeed);
+        try { f.hinge.enableMotor && f.hinge.enableMotor(); f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
+      } else {
+        // release: stop active motor control and let physics/damping return flipper to rest
         try { f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
-        return;
       }
-      const speedAbs = engaged ? f.upSpeed : f.downSpeed;
-      const speed = Math.sign(delta) * Math.abs(speedAbs);
-      try { f.hinge.enableMotor && f.hinge.enableMotor(); f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
     } catch (err) { console.warn('setFlipper hinge error', err); }
     return;
   }
