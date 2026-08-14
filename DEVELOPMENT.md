@@ -58,8 +58,15 @@ flipper 已從 **dynamic body + HingeConstraint** 改寫為 **kinematic body + �
 1. **flipper 改寫**:HingeConstraint 動態體 → kinematic 繞 Y 軸旋轉。解決三個問題:(a) 擋板脫離樞紐飛走、(b) 旋轉軸錯誤(原繞 Z 軸往上翻,打不到桌面上的球)、(c) 浮在平面上方。現在繞 Y 軸水平橫掃、底面貼齊桌面、樞紐固定。
 2. **重力**:新增 `TABLE_INCLINE_G` 下坡分量,球會朝擋板滾(原本桌面水平、球不動)。
 3. **UI**:hinge tuner 面板 `bottom 12px → 84px`,避免擋到左擋板觸控鈕。
+4. **側牆**:左右兩側加上貼齊桌面的可見矮牆(`sideRailHeight 1.0`,底面 `bedY + height/2`)。原本的側牆懸空(底部在 `y=0`),球會從牆底下溜出;新矮牆坐在 bed 上,沿桌面全長(`z`)擋住左右。
 
-已用本機 `python3 -m http.server 8000` + 瀏覽器實測驗證(擋板揮動、球下滾撞 bumper 得分)。尚未 commit/push。
+已用本機 `python3 -m http.server 8000` + 瀏覽器實測驗證(擋板揮動、球下滾撞 bumper 得分、側牆擋球)。
+
+### CI / 部署狀態(2026-08-14)
+- 已刪除多餘的 `auto_deploy.yml`;修正 `scripts/bump_version.sh` 的 stdout 汙染 bug(`git commit` 訊息導到 stderr),否則 workflow 會因多行 `$GITHUB_OUTPUT` 而失敗。
+- 沙箱終端的 git 憑證會解析成無寫入權的 `kenshinn-huang_htpilot`,無法直接 push;本次以 `git -c credential.helper= push https://github.com/...` 互動輸入 PAT 完成(不儲存、用完撤銷)。
+- 已部署驗證:線上版號推進到 **`v0.1.33`**,擋板/重力/側牆皆生效。
+- 提醒:CI 每次會把 `[auto]` bump 推回 main,動工前先 `git pull --ff-only origin main`。瀏覽器需 Cmd+Shift+R 硬重新整理才會拿到新版 `js/main.js`(檔名無版本化,快取較久)。
 
 ## 驗證方式
 

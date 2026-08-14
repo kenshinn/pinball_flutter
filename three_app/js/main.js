@@ -95,7 +95,7 @@ controls.maxPolarAngle = Math.PI / 2.1;
 // Physics
 // Simulate a tilted pinball table: a constant downhill pull toward the flippers (+Z)
 // so balls naturally roll down toward the bottom of the table.
-const TABLE_INCLINE_G = 3.0;
+const TABLE_INCLINE_G = 2.2;
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, TABLE_INCLINE_G) });
 world.broadphase = new CANNON.NaiveBroadphase();
 world.solver.iterations = 20; // a bit higher for stability
@@ -160,7 +160,7 @@ function addWall(pos, quat, size, options = {}) {
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
     mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pos.x, pos.y, pos.z);
-    mesh.quaternion.setFromEuler(quat.x, quat.y, quat.z, 'XYZ');
+    mesh.quaternion.setFromEuler(new THREE.Euler(quat.x, quat.y, quat.z, 'XYZ'));
     // attach visuals into tableGroup so we can tilt them together
     if (typeof tableGroup !== 'undefined') tableGroup.add(mesh); else scene.add(mesh);
   }
@@ -368,7 +368,7 @@ function createFlipper(side='left') {
     body, mesh, side, shapeOffset,
     restAngle, upAngle,
     angle: restAngle, targetAngle: restAngle,
-    angularSpeed: 18, // sweep speed (rad/s)
+    angularSpeed: 24, // sweep speed (rad/s)
     engaged: false,
     hingeVisualOffset: 0,
   };
@@ -395,6 +395,10 @@ function createFlipper(side='left') {
 createFlipper('left');
 createFlipper('right');
 
+// Developer overlays (angle readout + hinge tuner) are hidden by default.
+// Append ?debug (or ?debug=1) to the URL to show them.
+const DEBUG_UI = new URLSearchParams(window.location.search).has('debug');
+
 // Debug overlay: show flipper hinge angles and states (helpful during development)
 const debugEl = document.createElement('div');
 debugEl.id = 'debug-angles';
@@ -412,8 +416,8 @@ debugEl.style.borderRadius = '6px';
 debugEl.style.fontFamily = 'monospace';
 debugEl.style.whiteSpace = 'pre';
 debugEl.innerText = 'flipper debug...';
-// append to body so it's visually above the renderer canvas
-if (document && document.body) document.body.appendChild(debugEl);
+// append to body so it's visually above the renderer canvas (dev-only)
+if (DEBUG_UI && document && document.body) document.body.appendChild(debugEl);
 
 let _lastDebug = 0;
 function updateDebug(now) {
@@ -453,6 +457,7 @@ function updateDebug(now) {
 
 // small interactive tuner for hinge visual offset (mobile-friendly)
 (function attachHingeTuner(){
+  if (!DEBUG_UI) return; // dev-only panel, hidden unless ?debug is set
   const panel = document.createElement('div');
   panel.style.position = 'fixed';
   panel.style.left = '12px';
@@ -592,19 +597,23 @@ for (const f of flippers) {
 }
 
 
-// Add short side-guards near the flippers so balls can't roll out the sides
-(function addSideGuards(){
-  const guardHeight = 1.0;
-  const guardThicknessX = 0.6; // width across X
-  const guardDepthZ = 2.4;     // length along Z to cover the flipper area
-  const guardZ = tableSize.h/2 - 0.9; // near the bottom (flipper) region
-  const guardY = bedY + guardHeight/2; // sit on top of the bed
-  const guardX = tableSize.w/2 - 0.6; // place close to the side edges but inside the main side wall
-
-  // left guard
-  addWall({ x: -guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
-  // right guard
-  addWall({ x: guardX, y: guardY, z: guardZ }, { x: 0, y: 0, z: 0 }, { x: guardThicknessX, y: guardHeight, z: guardDepthZ }, { color: 0x333333 });
+// Angled funnel (outlane) walls: guide balls from the side rails down toward the
+// flippers so they don't drain in the open outer bottom corners.
+(function addFlipperFunnels(){
+  const funnelHeight = 1.0;
+  const funnelThickness = 0.3;
+  const y = bedY + funnelHeight/2;
+  const railInner = tableSize.w/2 + 0.5; // just inside the side rail (rail centre 4.75)
+  // Add a thin wall between two points on the bed, rotated around Y to line up.
+  function addAngledWall(x1, z1, x2, z2) {
+    const dx = x2 - x1, dz = z2 - z1;
+    const len = Math.hypot(dx, dz);
+    const cx = (x1 + x2) / 2, cz = (z1 + z2) / 2;
+    const angleY = Math.atan2(-dz, dx); // align the box's local X axis with (dx, dz)
+    addWall({ x: cx, y, z: cz }, { x: 0, y: angleY, z: 0 }, { x: len, y: funnelHeight, z: funnelThickness }, { color: 0x445566 });
+  }
+  addAngledWall( railInner, 2.3,  2.6, 5.2); // right funnel -> right flipper pivot
+  addAngledWall(-railInner, 2.3, -2.6, 5.2); // left funnel  -> left flipper pivot
 })();
 
 function setFlipper(side, engaged) {
