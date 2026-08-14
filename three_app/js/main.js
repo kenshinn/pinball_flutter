@@ -214,7 +214,7 @@ const bumpers = [];
 function createBumper(x,z,r=0.6, points=100) {
   // create a vertical cylinder (post) rooted on the bed so balls bounce off a grounded post
   const height = 1.2;
-  const mat = new THREE.MeshStandardMaterial({ color: 0xff6b6b, emissive:0x220000, roughness:0.35, metalness:0.2 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0xff6b6b, emissive:0xff4422, emissiveIntensity: 0.12, roughness:0.35, metalness:0.2 });
   const geo = new THREE.CylinderGeometry(r, r, height, 24);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, bedY + height/2, z);
@@ -244,7 +244,7 @@ function createBumper(x,z,r=0.6, points=100) {
   // check (see BUMPER_POP / popBumpers). This reliably kicks the ball out of the
   // bumper's zone even when it would otherwise come to rest against the post.
 
-  bumpers.push({ body, mesh, points, r });
+  bumpers.push({ body, mesh, mat, points, r, flash: 0 });
   // register so bumpers follow visual table tilt (syncTableObjects will update body/mesh)
   registerTableObject(body, mesh);
 }
@@ -871,6 +871,45 @@ window.addEventListener('resize', ()=> {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// --- Visual feedback: floating score popups + brief screen flash ---
+const fxLayer = document.createElement('div');
+Object.assign(fxLayer.style, { position: 'fixed', inset: '0', pointerEvents: 'none', overflow: 'hidden', zIndex: 40 });
+if (document.body) document.body.appendChild(fxLayer);
+
+const flashEl = document.createElement('div');
+Object.assign(flashEl.style, { position: 'fixed', inset: '0', pointerEvents: 'none', background: '#fff', opacity: '0', zIndex: 39 });
+if (document.body) document.body.appendChild(flashEl);
+
+function triggerScreenFlash(strength = 0.1) {
+  flashEl.style.transition = 'none';
+  flashEl.style.opacity = String(Math.min(0.18, strength));
+  void flashEl.offsetWidth; // force reflow so the fade-out animates
+  flashEl.style.transition = 'opacity 260ms ease-out';
+  flashEl.style.opacity = '0';
+}
+
+const _fxProj = new THREE.Vector3();
+function showScorePopup(wx, wy, wz, points) {
+  _fxProj.set(wx, wy, wz).project(camera);
+  if (_fxProj.z > 1) return; // behind the camera
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = rect.left + (_fxProj.x * 0.5 + 0.5) * rect.width;
+  const y = rect.top + (-_fxProj.y * 0.5 + 0.5) * rect.height;
+  const el = document.createElement('div');
+  el.textContent = '+' + points;
+  Object.assign(el.style, {
+    position: 'absolute', left: x + 'px', top: y + 'px',
+    transform: 'translate(-50%, -50%)', color: '#ffd66b',
+    font: '700 22px system-ui, sans-serif', textShadow: '0 2px 6px rgba(0,0,0,0.6)',
+    transition: 'transform 700ms ease-out, opacity 700ms ease-out', opacity: '1',
+  });
+  fxLayer.appendChild(el);
+  void el.offsetWidth;
+  el.style.transform = 'translate(-50%, -170%)';
+  el.style.opacity = '0';
+  setTimeout(() => { try { fxLayer.removeChild(el); } catch (e) {} }, 760);
+}
+
 // Animation / physics loop
 const timeStep = 1/60;
 let lastTime;
@@ -1004,11 +1043,23 @@ function animate(time) {
             if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3((dx / d) * BUMPER_POP, 0, (dz / d) * BUMPER_POP), b.position);
             updateScore(bp.points);
             playPing(600 + Math.random()*400, 0.09);
+            // visual feedback: pulse the bumper, pop a score label, flash the screen
+            bp.flash = 1;
+            showScorePopup(bp.body.position.x, bedY + 0.6, bp.body.position.z, bp.points);
+            triggerScreenFlash(0.06 + bp.points / 1800);
           }
         }
       }
       m.position.copy(b.position);
       m.quaternion.copy(b.quaternion);
+    }
+
+    // decay bumper hit pulse (visual feedback: emissive flash + radius pulse)
+    for (const bp of bumpers) {
+      if (bp.flash > 0) bp.flash = Math.max(0, bp.flash - dt * 4);
+      const s = 1 + bp.flash * 0.3;
+      bp.mesh.scale.set(s, 1, s);
+      if (bp.mat) bp.mat.emissiveIntensity = 0.12 + bp.flash * 2.0;
     }
   }
   controls.update();
