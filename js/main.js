@@ -194,18 +194,22 @@ tableGroup.add(floorMesh);
 // Side rails (left and right) — short visible walls that sit ON the bed so balls
 // can't roll off the sides. (The previous walls floated above the bed with their
 // bottom at y=0, letting low-rolling balls slip underneath.)
-const sideRailHeight = 1.0;
+const sideRailHeight = 2.0;
 const sideRailThickness = 0.5;
 const sideRailX = tableSize.w/2 + 0.75; // sits along the visible floor edge
 addWall({ x: -sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
 addWall({ x:  sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
 
-// Ramp wall kept at the TOP (opposite the flippers) to keep balls in play
-// Move it to the negative z side so it doesn't block flippers at the bottom.
-const rampHeight = 1;
-addWall({x:0, y: bedY + rampHeight/2, z:-tableSize.h/2 + 1}, {x: -0.3, y:0, z:0}, {x:tableSize.w-1, y:rampHeight, z:1});
+// Tall back wall along the TOP edge (behind the bumpers) so balls can't fly out
+// the back when they spawn from above or get launched by a hard hit. Spans the
+// full width between the side rails.
+const backWallHeight = 3.0;
+addWall({ x: 0, y: bedY + backWallHeight/2, z: -tableSize.h/2 + 0.5 }, { x: 0, y: 0, z: 0 }, { x: 2 * sideRailX, y: backWallHeight, z: 0.5 }, { color: 0x50607a });
 
 // create some spherical bumpers (visual + invisible physics)
+// Pop-bumper kick strength (horizontal impulse applied when a ball enters the zone).
+const BUMPER_POP = 7;
+const BUMPER_COOLDOWN_MS = 200; // per-ball, per-bumper gate for pop + scoring
 const bumpers = [];
 function createBumper(x,z,r=0.6, points=100) {
   // create a vertical cylinder (post) rooted on the bed so balls bounce off a grounded post
@@ -236,28 +240,20 @@ function createBumper(x,z,r=0.6, points=100) {
     console.warn('failed to sync bumper visual quaternion', err);
   }
 
-  // collision scoring + debug log
-  body.addEventListener('collide', (e) => {
-    try {
-      if (e.body && e.body._isBall) {
-        const impact = e.contact && typeof e.contact.getImpactVelocityAlongNormal === 'function' ? e.contact.getImpactVelocityAlongNormal() : null;
-        console.debug('Bumper collided with ball', { bumperPos: body.position, ballId: e.body.id, impact });
-        updateScore(points);
-        playPing(600 + Math.random()*400, 0.09);
-      }
-    } catch (err) {
-      console.warn('bumper collide handler error', err);
-    }
-  });
+  // Pop + scoring are handled per-frame in the animation loop via a proximity
+  // check (see BUMPER_POP / popBumpers). This reliably kicks the ball out of the
+  // bumper's zone even when it would otherwise come to rest against the post.
 
-  bumpers.push({ body, mesh });
+  bumpers.push({ body, mesh, points, r });
   // register so bumpers follow visual table tilt (syncTableObjects will update body/mesh)
   registerTableObject(body, mesh);
 }
 
-createBumper(-2, 0, 0.6, 150);
-createBumper(2, -2, 0.6, 100);
-createBumper(0, 2, 0.6, 200);
+// Bumpers form a triangle in the UPPER playfield (negative z, toward the top ramp)
+// so the lower/middle of the table stays clear for the ball to flow to the flippers.
+createBumper(-1.8, -2.2, 0.6, 100);
+createBumper( 1.8, -2.2, 0.6, 100);
+createBumper( 0.0, -3.8, 0.6, 150);
 
 // Ball spawn
 let ballCount = 0;
@@ -310,10 +306,10 @@ function clearBalls() {
   ballCount = 0;
 }
 
-// Spawn at a safe position above the table
+// Drop the ball into the upper playfield (just below the top ramp) so it rolls
+// down through the bumpers toward the flippers, instead of appearing dead-centre.
 function spawnAtCenter() {
-  const v = new THREE.Vector3(0, 6, 0);
-  spawnBall({x:v.x, y:v.y, z:v.z});
+  spawnBall({ x: -0.6, y: 4, z: -1.5 });
 }
 
 // Raycaster for pointer spawn onto floorMesh (prefer object intersection to plane)
@@ -600,7 +596,7 @@ for (const f of flippers) {
 // Angled funnel (outlane) walls: guide balls from the side rails down toward the
 // flippers so they don't drain in the open outer bottom corners.
 (function addFlipperFunnels(){
-  const funnelHeight = 1.0;
+  const funnelHeight = 1.5;
   const funnelThickness = 0.3;
   const y = bedY + funnelHeight/2;
   const railInner = tableSize.w/2 + 0.5; // just inside the side rail (rail centre 4.75)
@@ -991,6 +987,25 @@ function animate(time) {
       if (y < -20) {
         removeBallAtIndex(i);
         continue;
+      }
+      // Pop bumpers: if the ball is within a bumper's trigger zone, kick it out
+      // horizontally and score (debounced per ball+bumper). This runs every frame
+      // so a ball can never come to rest against a bumper.
+      b._bumperHitAt = b._bumperHitAt || {};
+      const nowT = performance.now();
+      for (const bp of bumpers) {
+        const dx = b.position.x - bp.body.position.x;
+        const dz = b.position.z - bp.body.position.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist < bp.r + 0.35 + 0.12) { // bumper radius + ball radius + margin
+          if (nowT - (b._bumperHitAt[bp.body.id] || 0) > BUMPER_COOLDOWN_MS) {
+            b._bumperHitAt[bp.body.id] = nowT;
+            const d = dist || 1;
+            if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3((dx / d) * BUMPER_POP, 0, (dz / d) * BUMPER_POP), b.position);
+            updateScore(bp.points);
+            playPing(600 + Math.random()*400, 0.09);
+          }
+        }
       }
       m.position.copy(b.position);
       m.quaternion.copy(b.quaternion);
