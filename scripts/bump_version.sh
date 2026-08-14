@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
-# Avoid bumping if last commit was made by actions bot or already auto-bumped
-LAST_AUTHOR=$(git log -1 --pretty='%an <%ae>' || echo '')
+# Avoid bumping if last commit was already auto-bumped
 LAST_MSG=$(git log -1 --pretty='%B' || echo '')
-if echo "$LAST_AUTHOR" | grep -iq "github-actions" || echo "$LAST_MSG" | grep -q "\[auto\]"; then
+if echo "$LAST_MSG" | grep -q "\[auto\]"; then
   echo "SKIP"
   exit 0
 fi
