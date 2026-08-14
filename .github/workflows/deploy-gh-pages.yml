@@ -17,8 +17,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: false # peaceiris action will use the provided token to push
+          persist-credentials: true
           fetch-depth: 0
+
+      - name: Make bump script executable
+        run: chmod +x scripts/bump_version.sh
+
+      - name: Bump version and commit
+        id: bump
+        run: |
+          set -euo pipefail
+          NEW=$(./scripts/bump_version.sh)
+          echo "version=$NEW" >> $GITHUB_OUTPUT
+
+      - name: Show bumped version
+        if: steps.bump.outputs.version != 'SKIP'
+        run: echo "Bumped version -> ${{ steps.bump.outputs.version }}"
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v3
