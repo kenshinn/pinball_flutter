@@ -319,9 +319,19 @@ for (const K of kickers) {
   K.mesh = mesh; K.mat = mat;
 }
 
+// Launch velocity for a kicker: aimed at the lower-centre with a random angle/power.
+function kickerLaunchVelocity(K) {
+  let bx = 0 - K.x, bz = 2 - K.z; const bl = Math.hypot(bx, bz) || 1; bx /= bl; bz /= bl;
+  const jitter = (Math.random() - 0.5) * 2 * KICKER_SPREAD; // random launch angle
+  const cs = Math.cos(jitter), sn = Math.sin(jitter);
+  const rx = bx * cs - bz * sn, rz = bx * sn + bz * cs;
+  const pop = KICKER_POP * (0.85 + Math.random() * 0.3); // slight random power
+  return { x: rx * pop, y: 0, z: rz * pop };
+}
+
 // Ball spawn
 let ballCount = 0;
-function spawnBall(pos) {
+function spawnBall(pos, vel) {
   const radius = 0.35;
   const sphereGeo = new THREE.SphereGeometry(radius, 24, 24);
   const sphereMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, metalness:0.5, roughness:0.25 });
@@ -333,6 +343,7 @@ function spawnBall(pos) {
   const body = new CANNON.Body({ mass: 0.9 });
   body.addShape(shape);
   body.position.set(pos.x, pos.y, pos.z);
+  if (vel) body.velocity.set(vel.x, vel.y, vel.z);
   body.linearDamping = 0.01;
   body.angularDamping = 0.01;
   body.material = ballMaterial; // use shared ball material
@@ -358,6 +369,7 @@ function spawnBall(pos) {
   meshes.push(mesh);
 
   ballCount++;
+  return body;
 }
 
 function clearBalls() {
@@ -375,7 +387,14 @@ function clearBalls() {
 function spawnAtCenter() {
   // one ball in play at a time (a new ball is launched only after the current one drains)
   if (gameOver || ballsLeft <= 0 || bodies.length > 0) return;
-  spawnBall({ x: -0.6, y: 4, z: -1.5 });
+  // Serve: launch the ball from a random top-corner kicker (random angle), no score.
+  const ki = Math.random() < 0.5 ? 0 : 1;
+  const K = kickers[ki];
+  const body = spawnBall({ x: K.x, y: bedY + 0.4, z: K.z }, kickerLaunchVelocity(K));
+  // suppress the kicker's scoring for this serve (ball starts inside the kicker zone)
+  if (body) { body._kickerAt = {}; body._kickerAt[ki] = performance.now(); }
+  K.flash = 1;
+  playPing(300 + Math.random() * 120, 0.1);
 }
 
 // Raycaster for pointer spawn onto floorMesh (prefer object intersection to plane)
@@ -1266,12 +1285,8 @@ function animate(time) {
         if (Math.hypot(b.position.x - K.x, b.position.z - K.z) < KICKER_RADIUS) {
           if (nowK - (b._kickerAt[ki] || 0) > 400) {
             b._kickerAt[ki] = nowK;
-            let bx = 0 - K.x, bz = 2 - K.z; const bl = Math.hypot(bx, bz) || 1; bx /= bl; bz /= bl;
-            const jitter = (Math.random() - 0.5) * 2 * KICKER_SPREAD; // random launch angle
-            const cs = Math.cos(jitter), sn = Math.sin(jitter);
-            const rx = bx * cs - bz * sn, rz = bx * sn + bz * cs;
-            const pop = KICKER_POP * (0.85 + Math.random() * 0.3); // slight random power
-            if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3(rx * pop, 0, rz * pop), b.position);
+            const v = kickerLaunchVelocity(K);
+            if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3(v.x, v.y, v.z), b.position);
             updateScore(K.points);
             showScorePopup(K.x, bedY + 0.6, K.z, K.points);
             triggerScreenFlash(0.14);
