@@ -116,7 +116,7 @@ fitCamera();
 // Physics
 // Simulate a tilted pinball table: a constant downhill pull toward the flippers (+Z)
 // so balls naturally roll down toward the bottom of the table.
-const TABLE_INCLINE_G = 2.2;
+const TABLE_INCLINE_G = 3.4;
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, TABLE_INCLINE_G) });
 world.broadphase = new CANNON.NaiveBroadphase();
 world.solver.iterations = 20; // a bit higher for stability
@@ -141,6 +141,11 @@ const scoreEl = document.getElementById('score');
 function updateScore(v) {
   score += v || 0;
   if (scoreEl) scoreEl.textContent = `Score: ${score}`;
+  // progressive reward: award an extra ball when passing score milestones
+  while (nextBonusIdx < BONUS_BALL_THRESHOLDS.length && score >= BONUS_BALL_THRESHOLDS[nextBonusIdx]) {
+    nextBonusIdx++;
+    awardBonusBall();
+  }
 }
 
 // Game state (balls = lives). UI + game-over overlay are wired up later in the file.
@@ -148,6 +153,16 @@ let ballsLeft = 3;
 let gameOver = false;
 let highScore = 0;
 try { highScore = parseInt(localStorage.getItem('PINBALL_HIGH') || '0', 10) || 0; } catch (e) {}
+
+// Progressive reward: crossing each of these score milestones grants a bonus ball.
+const BONUS_BALL_THRESHOLDS = [5000, 15000, 30000];
+let nextBonusIdx = 0;
+
+// Combo: chaining bumper hits within a short window raises a score multiplier.
+let combo = 0;
+let lastComboAt = 0;
+const COMBO_WINDOW_MS = 2000;
+const COMBO_MAX = 5;
 
 // Audio (simple collision sound)
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -234,9 +249,11 @@ const backWallHeight = 3.0;
 addWall({ x: 0, y: bedY + backWallHeight/2, z: -tableSize.h/2 + 0.5 }, { x: 0, y: 0, z: 0 }, { x: 2 * sideRailX, y: backWallHeight, z: 0.5 }, { color: 0x50607a });
 
 // create some spherical bumpers (visual + invisible physics)
-// Pop-bumper kick strength (horizontal impulse applied when a ball enters the zone).
-const BUMPER_POP = 7;
-const BUMPER_COOLDOWN_MS = 200; // per-ball, per-bumper gate for pop + scoring
+// Pop-bumper kick strength (horizontal impulse applied when the ball hits a bumper).
+// The kick grows with the current combo (in hitBumper) so the ball keeps momentum
+// toward the flippers as combos build.
+const BUMPER_POP = 11;
+const BUMPER_COOLDOWN_MS = 150; // per-ball, per-bumper gate for pop + scoring
 const bumpers = [];
 function createBumper(x,z,r=0.6, points=100) {
   // create a vertical cylinder (post) rooted on the bed so balls bounce off a grounded post
@@ -267,11 +284,13 @@ function createBumper(x,z,r=0.6, points=100) {
     console.warn('failed to sync bumper visual quaternion', err);
   }
 
-  // Pop + scoring are handled per-frame in the animation loop via a proximity
-  // check (see BUMPER_POP / popBumpers). This reliably kicks the ball out of the
-  // bumper's zone even when it would otherwise come to rest against the post.
-
-  bumpers.push({ body, mesh, mat, points, r, flash: 0 });
+  // Reliable hit detection via the physics collide event (catches fast balls the
+  // per-frame proximity check can skip). The proximity check in the animation loop
+  // is a fallback that also un-sticks resting balls. Both go through hitBumper(),
+  // which debounces per ball+bumper so a hit isn't counted twice.
+  const bp = { body, mesh, mat, points, r, flash: 0 };
+  body.addEventListener('collide', (e) => { if (e.body && e.body._isBall) hitBumper(bp, e.body); });
+  bumpers.push(bp);
   // register so bumpers follow visual table tilt (syncTableObjects will update body/mesh)
   registerTableObject(body, mesh);
 }
@@ -953,6 +972,64 @@ function updateHighUI() { if (highEl) highEl.textContent = `High: ${highScore}`;
 updateBallsUI();
 updateHighUI();
 
+// Big centred celebratory banner (used for bonus-ball milestones)
+function showCenterBanner(text) {
+  const el = document.createElement('div');
+  el.textContent = text;
+  Object.assign(el.style, { position: 'fixed', left: '50%', top: '40%', transform: 'translate(-50%, -50%) scale(0.8)', color: '#ffe08a', font: '800 32px system-ui, sans-serif', textShadow: '0 3px 12px rgba(0,0,0,0.7)', pointerEvents: 'none', zIndex: 50, transition: 'transform 500ms ease-out, opacity 900ms ease-out', opacity: '1' });
+  (typeof fxLayer !== 'undefined' && fxLayer ? fxLayer : document.body).appendChild(el);
+  void el.offsetWidth;
+  el.style.transform = 'translate(-50%, -90%) scale(1.12)';
+  el.style.opacity = '0';
+  setTimeout(() => { try { el.remove(); } catch (e) {} }, 950);
+}
+function awardBonusBall() {
+  ballsLeft += 1;
+  updateBallsUI();
+  playPing(880, 0.16); playPing(1320, 0.16);
+  triggerScreenFlash(0.16);
+  showCenterBanner('BONUS BALL!  +1');
+}
+
+// Combo multiplier HUD + bumper scoring that applies the current multiplier.
+const comboEl = document.createElement('div');
+comboEl.id = 'combo';
+Object.assign(comboEl.style, { fontWeight: '800', padding: '6px 10px', background: 'rgba(255,140,40,0.18)', color: '#ffb347', borderRadius: '8px', display: 'none' });
+if (scoreRow && highEl) scoreRow.insertBefore(comboEl, highEl.nextSibling);
+function updateComboUI(mult) {
+  if (!comboEl) return;
+  if (mult > 1) { comboEl.textContent = `Combo ×${mult}`; comboEl.style.display = ''; }
+  else { comboEl.style.display = 'none'; }
+}
+function bumperScore(bp) {
+  const now = performance.now();
+  combo = (now - lastComboAt <= COMBO_WINDOW_MS) ? combo + 1 : 1;
+  lastComboAt = now;
+  const mult = Math.min(combo, COMBO_MAX);
+  updateComboUI(mult);
+  const gained = bp.points * mult;
+  updateScore(gained);
+  bp.flash = 1;
+  showScorePopup(bp.body.position.x, bedY + 0.6, bp.body.position.z, gained);
+  triggerScreenFlash(Math.min(0.2, 0.05 + gained / 3000));
+  playPing(560 + Math.random() * 300 + mult * 70, 0.09);
+  return mult;
+}
+// Handle a bumper hit: debounce, score (combo), and kick the ball away with a
+// speed that scales with the combo so higher combos send the ball faster.
+function hitBumper(bp, ball) {
+  const now = performance.now();
+  ball._bumperHitAt = ball._bumperHitAt || {};
+  if (now - (ball._bumperHitAt[bp.body.id] || 0) <= BUMPER_COOLDOWN_MS) return;
+  ball._bumperHitAt[bp.body.id] = now;
+  const mult = bumperScore(bp);
+  const pop = BUMPER_POP + (mult - 1) * 3; // more combo -> stronger kick
+  const dx = ball.position.x - bp.body.position.x;
+  const dz = ball.position.z - bp.body.position.z;
+  const d = Math.hypot(dx, dz) || 1;
+  if (ball.applyImpulse) ball.applyImpulse(new CANNON.Vec3((dx / d) * pop, 0, (dz / d) * pop), ball.position);
+}
+
 const gameOverEl = document.createElement('div');
 Object.assign(gameOverEl.style, { position: 'fixed', inset: '0', display: 'none', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '14px', background: 'rgba(0,0,0,0.62)', color: '#fff', zIndex: 60, fontFamily: 'system-ui, sans-serif' });
 const goTitle = document.createElement('div');
@@ -972,6 +1049,7 @@ function onBallDrained() {
   ballsLeft = Math.max(0, ballsLeft - 1);
   updateBallsUI();
   playPing(150, 0.25); // low "ball lost" tone
+  combo = 0; updateComboUI(1);
   if (ballsLeft <= 0) endGame();
 }
 function endGame() {
@@ -987,6 +1065,9 @@ function newGame() {
   if (scoreEl) scoreEl.textContent = 'Score: 0';
   ballsLeft = 3;
   gameOver = false;
+  nextBonusIdx = 0;
+  combo = 0;
+  updateComboUI(1);
   updateBallsUI();
   gameOverEl.style.display = 'none';
 }
@@ -1109,28 +1190,12 @@ function animate(time) {
         onBallDrained();
         continue;
       }
-      // Pop bumpers: if the ball is within a bumper's trigger zone, kick it out
-      // horizontally and score (debounced per ball+bumper). This runs every frame
-      // so a ball can never come to rest against a bumper.
-      b._bumperHitAt = b._bumperHitAt || {};
-      const nowT = performance.now();
+      // Pop bumpers (fallback): the collide event is the primary trigger, but this
+      // per-frame proximity check also fires hitBumper() to un-stick a resting ball.
       for (const bp of bumpers) {
         const dx = b.position.x - bp.body.position.x;
         const dz = b.position.z - bp.body.position.z;
-        const dist = Math.hypot(dx, dz);
-        if (dist < bp.r + 0.35 + 0.12) { // bumper radius + ball radius + margin
-          if (nowT - (b._bumperHitAt[bp.body.id] || 0) > BUMPER_COOLDOWN_MS) {
-            b._bumperHitAt[bp.body.id] = nowT;
-            const d = dist || 1;
-            if (b.applyImpulse) b.applyImpulse(new CANNON.Vec3((dx / d) * BUMPER_POP, 0, (dz / d) * BUMPER_POP), b.position);
-            updateScore(bp.points);
-            playPing(600 + Math.random()*400, 0.09);
-            // visual feedback: pulse the bumper, pop a score label, flash the screen
-            bp.flash = 1;
-            showScorePopup(bp.body.position.x, bedY + 0.6, bp.body.position.z, bp.points);
-            triggerScreenFlash(0.06 + bp.points / 1800);
-          }
-        }
+        if (Math.hypot(dx, dz) < bp.r + 0.35 + 0.12) hitBumper(bp, b);
       }
       m.position.copy(b.position);
       m.quaternion.copy(b.quaternion);
@@ -1143,6 +1208,8 @@ function animate(time) {
       bp.mesh.scale.set(s, 1, s);
       if (bp.mat) bp.mat.emissiveIntensity = 0.12 + bp.flash * 2.0;
     }
+    // expire the combo multiplier if no bumper was hit within the window
+    if (combo > 0 && performance.now() - lastComboAt > COMBO_WINDOW_MS) { combo = 0; updateComboUI(1); }
   }
   controls.update();
   renderer.render(scene, camera);
