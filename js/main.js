@@ -791,9 +791,11 @@ function animate(time) {
           f.angularVel = angVel;
           // set body quaternion and angular velocity so the physics step sees the motion
           try {
-            f.body.quaternion.setFromAxisAngle(new CANNON.Vec3(0,0,1), f.angle);
+            // include visual offset so kinematic angle matches the physics body orientation used at creation
+            const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle + (f.hingeVisualOffset||0));
+            f.body.quaternion.set(q.x, q.y, q.z, q.w);
           } catch (e) {
-            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle);
+            const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), f.angle + (f.hingeVisualOffset||0));
             f.body.quaternion.set(tq.x, tq.y, tq.z, tq.w);
           }
           f.body.angularVelocity.set(0, angVel, 0);
