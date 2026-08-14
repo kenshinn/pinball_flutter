@@ -4,6 +4,10 @@ on:
   push:
     branches: [ main ]
 
+# Grant the workflow the minimum elevated permission needed to push to gh-pages.
+permissions:
+  contents: write
+
 jobs:
   deploy:
     name: Deploy site to gh-pages
@@ -13,7 +17,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          persist-credentials: false # we'll use the token provided by the action
+          persist-credentials: false # peaceiris action will use the provided token to push
           fetch-depth: 0
 
       - name: Deploy to gh-pages
