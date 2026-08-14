@@ -369,24 +369,32 @@ function createFlipper(side='left') {
     if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e6;
   } catch (err) { console.warn('hinge setup failed', err); }
 
+  // load persisted visual offset (if user tuned it) and compute physical starting angles
+  const _storedOffsets = (typeof localStorage !== 'undefined') ? (function(){ try { const r = localStorage.getItem('HINGE_VISUAL_OFFSETS'); return r ? JSON.parse(r) : null;} catch(e){return null;} })() : null;
+  const defaultVisOffset = _storedOffsets ? (_storedOffsets[isLeft ? 'left' : 'right'] || 0) : 0;
+
   // Ensure the flipper starts at its rest angle (both physics body and visual mesh)
   try {
-    const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), restAngle);
+    // physics body should be set to the physical angle = visual restAngle - visualOffset
+    const physRest = restAngle - (defaultVisOffset || 0);
+    const physTq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), physRest);
     // set physics body quaternion
-    try { body.quaternion.set(tq.x, tq.y, tq.z, tq.w); } catch(e) { /* fallback ignored */ }
+    try { body.quaternion.set(physTq.x, physTq.y, physTq.z, physTq.w); } catch(e) { /* fallback ignored */ }
     // reposition body so pivot aligns correctly: body.position = pivot.position - rotated(pivotB)
     try {
       const pivotPos = pivot.position; // CANNON.Vec3
       const localPivotB = new THREE.Vector3(pivotB.x, pivotB.y, pivotB.z);
-      const worldPivotOffset = localPivotB.clone().applyQuaternion(tq);
+      const worldPivotOffset = localPivotB.clone().applyQuaternion(physTq);
       const bodyWorldPos = new THREE.Vector3(pivotPos.x - worldPivotOffset.x, pivotPos.y - worldPivotOffset.y, pivotPos.z - worldPivotOffset.z);
       body.position.set(bodyWorldPos.x, bodyWorldPos.y, bodyWorldPos.z);
     } catch (e) { /* best-effort, ignore */ }
-    // set mesh quaternion & position for visual match
-    try { mesh.quaternion.copy(tq); mesh.position.set(body.position.x, body.position.y, body.position.z); } catch(e) { /* ok */ }
+    // set mesh quaternion & position for visual match (visual uses restAngle)
+    try { const visTq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), restAngle); mesh.quaternion.copy(visTq); mesh.position.set(body.position.x, body.position.y, body.position.z); } catch(e) { /* ok */ }
   } catch (err) { console.warn('initial flipper quaternion set failed', err); }
 
   const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: 12, downSpeed: 8 };
+  // apply default visual offset so other code can rely on it
+  state.hingeVisualOffset = defaultVisOffset || 0;
 
   // small assist impulse on collision while flipper is actively driving (helps counter tunneling)
   body.addEventListener && body.addEventListener('collide', (e) => {
@@ -444,14 +452,22 @@ function updateDebug(now) {
   for (const f of flippers) {
     try {
       let ang = 0;
-      if (f.hinge && typeof f.hinge.getAngle === 'function') ang = f.hinge.getAngle();
-      else if (typeof f.angle === 'number') ang = f.angle;
-      const deg = (ang * 180 / Math.PI).toFixed(1);
+      let showVis = null;
+      if (f.hinge && typeof f.hinge.getAngle === 'function') {
+        ang = f.hinge.getAngle();
+        // ang is physical angle; compute visual angle = phys + offset
+        showVis = ang + (f.hingeVisualOffset || 0);
+      } else if (typeof f.angle === 'number') {
+        ang = f.angle;
+        showVis = ang + (f.hingeVisualOffset || 0);
+      }
+      const degPhys = (ang * 180 / Math.PI).toFixed(1);
+      const degVis = (showVis * 180 / Math.PI).toFixed(1);
       const pivotPos = f.pivot ? `${f.pivot.position.x.toFixed(2)},${f.pivot.position.y.toFixed(2)},${f.pivot.position.z.toFixed(2)}` : 'n/a';
       const bodyPos = f.body ? `${f.body.position.x.toFixed(2)},${f.body.position.y.toFixed(2)},${f.body.position.z.toFixed(2)}` : 'n/a';
       const meshPos = f.mesh ? `${f.mesh.position.x.toFixed(2)},${f.mesh.position.y.toFixed(2)},${f.mesh.position.z.toFixed(2)}` : 'n/a';
       const hingeMotor = f.hinge && typeof f.hinge.enableMotor === 'function' ? (f.hinge.motorEnabled ? 'on' : 'off') : 'n/a';
-      lines.push(`${f.side}: ${deg}° ${f.engaged? 'ENG':'   '} | pivot ${pivotPos} | body ${bodyPos} | mesh ${meshPos} | motor ${hingeMotor}`);
+      lines.push(`${f.side}: phys ${degPhys}° vis ${degVis}° ${f.engaged? 'ENG':'   '} | pivot ${pivotPos} | body ${bodyPos} | mesh ${meshPos} | motor ${hingeMotor}`);
     } catch (e) { lines.push(`${f.side}: err`); }
   }
   debugEl.innerText = lines.join('\n');
@@ -628,7 +644,9 @@ function setFlipper(side, engaged) {
     // When released, disable the motor and allow damping/hinge limits to settle the flipper.
     try {
       if (engaged) {
-        const target = f.upAngle;
+        // compute physical target by subtracting visual offset
+        const targetVis = f.upAngle;
+        const target = targetVis - (f.hingeVisualOffset || 0);
         let cur = 0;
         if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
         else if (f.body && f.body.quaternion) {
@@ -968,9 +986,11 @@ function animate(time) {
 
         // if hinge present, check angle and stop motor when target reached
         if (f.hinge && typeof f.hinge.getAngle === 'function') {
+          // hinge.getAngle() returns physical angle; account for visual offset when checking target
           const ang = f.hinge.getAngle();
-          const target = f.engaged ? f.upAngle : f.restAngle;
-          const diff = Math.abs(ang - target);
+          const targetVis = f.engaged ? f.upAngle : f.restAngle;
+          const targetPhys = targetVis - (f.hingeVisualOffset || 0);
+          const diff = Math.abs(ang - targetPhys);
           if (diff < 0.025) {
             // close enough: stop motor
             try { f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
