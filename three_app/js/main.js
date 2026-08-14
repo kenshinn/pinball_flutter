@@ -161,8 +161,9 @@ let nextBonusIdx = 0;
 // Combo: chaining bumper hits within a short window raises a score multiplier.
 let combo = 0;
 let lastComboAt = 0;
+let maxComboThisGame = 0; // best combo reached in the current game (shown on game over)
 const COMBO_WINDOW_MS = 2000;
-const COMBO_MAX = 5;
+const COMBO_MAX = 10;
 
 // Audio (simple collision sound)
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -432,6 +433,8 @@ function createFlipper(side='left') {
     angularSpeed: 24, // sweep speed (rad/s)
     engaged: false,
     hingeVisualOffset: 0,
+    bladeLen: length,          // physics blade length (for the predictive resolver)
+    halfThick: thickness / 2,  // physics blade half-thickness
   };
 
   // assist impulse while the flipper is actively swinging (helps counter tunneling)
@@ -1013,17 +1016,18 @@ const comboEl = document.createElement('div');
 comboEl.id = 'combo';
 Object.assign(comboEl.style, { fontWeight: '800', padding: '6px 10px', background: 'rgba(255,140,40,0.18)', color: '#ffb347', borderRadius: '8px', display: 'none' });
 if (scoreRow && highEl) scoreRow.insertBefore(comboEl, highEl.nextSibling);
-function updateComboUI(mult) {
+function updateComboUI(n) {
   if (!comboEl) return;
-  if (mult > 1) { comboEl.textContent = `Combo ×${mult}`; comboEl.style.display = ''; }
+  if (n > 1) { comboEl.textContent = `Combo ×${n}`; comboEl.style.display = ''; }
   else { comboEl.style.display = 'none'; }
 }
 function bumperScore(bp) {
   const now = performance.now();
   combo = (now - lastComboAt <= COMBO_WINDOW_MS) ? combo + 1 : 1;
   lastComboAt = now;
-  const mult = Math.min(combo, COMBO_MAX);
-  updateComboUI(mult);
+  if (combo > maxComboThisGame) maxComboThisGame = combo; // track the raw (uncapped) combo
+  updateComboUI(combo); // show the raw combo count — no display cap, chase a high number
+  const mult = Math.min(combo, COMBO_MAX); // score multiplier is capped so points don't inflate
   const gained = bp.points * mult;
   updateScore(gained);
   bp.flash = 1;
@@ -1073,7 +1077,7 @@ function endGame() {
   gameOver = true;
   if (score > highScore) { highScore = score; try { localStorage.setItem('PINBALL_HIGH', String(highScore)); } catch (e) {} }
   updateHighUI();
-  goScore.textContent = `Score ${score}   \u00b7   High ${highScore}`;
+  goScore.innerHTML = `Score ${score} &nbsp;·&nbsp; High ${highScore}<br>Best Combo ×${Math.max(1, maxComboThisGame)}`;
   gameOverEl.style.display = 'flex';
 }
 function newGame() {
@@ -1084,9 +1088,48 @@ function newGame() {
   gameOver = false;
   nextBonusIdx = 0;
   combo = 0;
+  maxComboThisGame = 0;
   updateComboUI(1);
   updateBallsUI();
   gameOverEl.style.display = 'none';
+}
+
+// Predictive flipper resolver: each frame, keep the ball on the playfield side of
+// each blade (prevents fast-swing tunneling to the drain) and kick it when the
+// flipper is raised. More reliable than physics contact for a thin, fast paddle.
+function resolveFlipperBall(f, b) {
+  if (!f || !f.body || !b) return;
+  if (!f.engaged) return; // only guard while the paddle is swinging up (when tunneling happens);
+                          // at rest, let normal physics handle the ball so it isn't pinned/frozen
+  const P = f.body.position;
+  const localDir = new CANNON.Vec3(f.side === 'left' ? 1 : -1, 0, 0);
+  const D = f.body.quaternion.vmult(localDir); // world blade direction (x-z plane)
+  const vx = b.position.x - P.x, vz = b.position.z - P.z;
+  const along = vx * D.x + vz * D.z;
+  const ballR = 0.35;
+  if (along < -ballR || along > f.bladeLen + ballR) return; // outside the blade span
+  const px = vx - along * D.x, pz = vz - along * D.z;
+  if (Math.hypot(px, pz) > f.halfThick + ballR + 0.06) return; // not touching the blade
+  // playfield-side normal (perpendicular to D, pointing up-table / -z)
+  let nx = -D.z, nz = D.x;
+  if (nz > 0) { nx = -nx; nz = -nz; }
+  const reach = f.halfThick + ballR;
+  const signed = px * nx + pz * nz; // ball offset along the playfield normal
+  if (signed < reach) {
+    // push the ball back onto the playfield side of the blade surface
+    const corr = reach - signed;
+    b.position.x += nx * corr;
+    b.position.z += nz * corr;
+    // cancel any velocity heading into the blade
+    const vn = b.velocity.x * nx + b.velocity.z * nz;
+    if (vn < 0) { b.velocity.x -= vn * nx; b.velocity.z -= vn * nz; }
+    // flipper kick while the paddle is raised
+    if (f.engaged) {
+      const target = 10 + f.angularSpeed * 0.25;
+      const vN = b.velocity.x * nx + b.velocity.z * nz;
+      if (vN < target) { const add = target - vN; b.velocity.x += nx * add; b.velocity.z += nz * add; }
+    }
+  }
 }
 
 // Animation / physics loop
@@ -1237,6 +1280,9 @@ function animate(time) {
           }
         }
       }
+      // Predictive flipper resolver: keep the ball on the playfield side of each
+      // blade and kick it when the flipper is raised (robust vs fast-swing tunneling).
+      for (const f of flippers) resolveFlipperBall(f, b);
       m.position.copy(b.position);
       m.quaternion.copy(b.quaternion);
     }
