@@ -407,6 +407,50 @@ function createFlipper(side='left') {
 createFlipper('left');
 createFlipper('right');
 
+// Debug overlay: show flipper hinge angles and states (helpful during development)
+const debugEl = document.createElement('div');
+debugEl.id = 'debug-angles';
+debugEl.style.position = 'absolute';
+debugEl.style.right = '12px';
+debugEl.style.top = '36px';
+debugEl.style.zIndex = 40;
+debugEl.style.padding = '6px 10px';
+debugEl.style.background = 'rgba(0,0,0,0.5)';
+debugEl.style.color = '#9fd';
+debugEl.style.fontSize = '12px';
+debugEl.style.borderRadius = '6px';
+debugEl.style.fontFamily = 'monospace';
+debugEl.innerText = 'flipper debug...';
+const containerEl = document.getElementById('container');
+if (containerEl) containerEl.appendChild(debugEl);
+
+let _lastDebug = 0;
+function updateDebug(now) {
+  if (!debugEl) return;
+  if (now - _lastDebug < 150) return; // throttle updates to ~150ms
+  _lastDebug = now;
+  const lines = [];
+  for (const f of flippers) {
+    try {
+      let ang = 0;
+      if (f.hinge && typeof f.hinge.getAngle === 'function') ang = f.hinge.getAngle();
+      else if (typeof f.angle === 'number') ang = f.angle;
+      const deg = (ang * 180 / Math.PI).toFixed(1);
+      lines.push(`${f.side}: ${deg}° ${f.engaged? 'ENG':'   '}`);
+    } catch (e) { lines.push(`${f.side}: err`); }
+  }
+  debugEl.innerText = lines.join('\n');
+}
+
+// initial dump for diagnostics
+for (const f of flippers) {
+  try {
+    if (f.hinge && typeof f.hinge.getAngle === 'function') console.debug('flipper initial angle', f.side, f.hinge.getAngle());
+    else console.debug('flipper initial angle (body)', f.side, f.body && f.body.quaternion);
+  } catch (e) { console.warn('flipper initial debug failed', e); }
+}
+
+
 // Add short side-guards near the flippers so balls can't roll out the sides
 (function addSideGuards(){
   const guardHeight = 1.0;
