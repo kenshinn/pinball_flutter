@@ -1,0 +1,43 @@
+name: Auto Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  build-deploy:
+    # Avoid re-triggering from the workflow's own commits
+    if: github.actor != 'github-actions'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Make bump script executable
+        run: |
+          chmod +x three_app/scripts/bump_version.sh
+
+      - name: Bump version and commit
+        working-directory: three_app
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # bump_version.sh will update index.html and commit the bump to main
+          ./scripts/bump_version.sh
+
+      - name: Deploy to gh-pages (ensure latest web build is published)
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./three_app
+          publish_branch: gh-pages
+          # force overwrite to ensure a clean deployment
+          publish_dir_force: true

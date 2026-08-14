@@ -1,0 +1,13 @@
+name: pinball_shell
+description: Minimal Flutter web shell embedding a three.js pinball app (web-only)
+publish_to: 'none'
+version: 0.0.1
+environment:
+  sdk: '>=2.18.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
