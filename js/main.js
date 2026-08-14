@@ -511,14 +511,14 @@ function setFlipper(side, engaged) {
         while (delta > Math.PI) delta -= Math.PI*2;
         while (delta < -Math.PI) delta += Math.PI*2;
         if (Math.abs(delta) < 0.02) {
-          try { f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+          try { if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(0); if (f.hinge.disableMotor) { f.hinge.disableMotor(); f.hinge._motorEnabled = false; } } catch(e){}
           return;
         }
         const speed = Math.sign(delta) * Math.abs(f.upSpeed);
-        try { f.hinge.enableMotor && f.hinge.enableMotor(); f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
+        try { if (f.hinge.enableMotor) { f.hinge.enableMotor(); f.hinge._motorEnabled = true; } if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
       } else {
         // release: stop active motor control and let physics/damping return flipper to rest
-        try { f.hinge.setMotorSpeed && f.hinge.setMotorSpeed(0); f.hinge.disableMotor && f.hinge.disableMotor(); } catch(e){}
+        try { if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(0); if (f.hinge.disableMotor) { f.hinge.disableMotor(); f.hinge._motorEnabled = false; } } catch(e){}
       }
     } catch (err) { console.warn('setFlipper hinge error', err); }
     return;
