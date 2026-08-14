@@ -369,6 +369,15 @@ function createFlipper(side='left') {
     if (typeof hinge.motorMaxForce !== 'undefined') hinge.motorMaxForce = 1e6;
   } catch (err) { console.warn('hinge setup failed', err); }
 
+  // Ensure the flipper starts at its rest angle (both physics body and visual mesh)
+  try {
+    const tq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), restAngle);
+    // set physics body quaternion
+    try { body.quaternion.set(tq.x, tq.y, tq.z, tq.w); } catch(e) { /* fallback ignored */ }
+    // set mesh quaternion for visual match
+    try { mesh.quaternion.copy(tq); } catch(e) { /* ok */ }
+  } catch (err) { console.warn('initial flipper quaternion set failed', err); }
+
   const state = { body, mesh, pivot, hinge, side, restAngle, upAngle, engaged:false, upSpeed: 12, downSpeed: 8 };
 
   // small assist impulse on collision while flipper is actively driving (helps counter tunneling)
@@ -721,9 +730,11 @@ function animate(time) {
       } catch (err) { console.warn('pre-step flipper update error', err); }
     }
 
-    // Sync registered table objects to the current visual tilt BEFORE stepping physics so
-    // the physics bodies move consistently with the visuals when visualsTiltEnabled.
-    try { syncTableObjects(); } catch(e) { console.warn('syncTableObjects pre-step failed', e); }
+      // If visuals tilt is enabled, sync registered table objects to the current visual tilt
+    // BEFORE stepping physics so the physics bodies move consistently with the visuals.
+    if (visualsTiltEnabled) {
+      try { syncTableObjects(); } catch(e) { console.warn('syncTableObjects pre-step failed', e); }
+    }
 
     // step physics (use maxSubSteps to keep simulation stable on variable frame rates)
     world.step(timeStep, dt, 10);
