@@ -23,7 +23,7 @@ awk -v old="$OLD" -v new="$NEW" 'NR==1{found=0} { if(!found && index($0,old)){su
 echo "$NEW" > three_app/VERSION.txt
 # commit if changed
 if git diff --quiet -- "$FILE" >/dev/null 2>&1; then
-  echo "NO_CHANGE"
+  echo "NO_CHANGE" >&2
   echo "$NEW"
   exit 0
 fi
@@ -31,6 +31,7 @@ fi
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 git add "$FILE" three_app/VERSION.txt
-git commit -m "chore: bump version to $NEW [auto]"
+# send commit summary to stderr so stdout only carries the version string
+git commit -m "chore: bump version to $NEW [auto]" >&2
 # Emit version for the caller to consume
 echo "$NEW"
