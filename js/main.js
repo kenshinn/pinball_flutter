@@ -1204,7 +1204,15 @@ function updateDebug(now) {
       const bodyPos = f.body ? `${f.body.position.x.toFixed(2)},${f.body.position.y.toFixed(2)},${f.body.position.z.toFixed(2)}` : 'n/a';
       const meshPos = f.mesh ? `${f.mesh.position.x.toFixed(2)},${f.mesh.position.y.toFixed(2)},${f.mesh.position.z.toFixed(2)}` : 'n/a';
       const hingeMotor = f.hinge && typeof f.hinge.enableMotor === 'function' ? (f.hinge.motorEnabled ? 'on' : 'off') : 'n/a';
-      lines.push(`${f.side}: phys ${degPhys}° vis ${degVis}° ${f.engaged? 'ENG':'   '} | pivot ${pivotPos} | body ${bodyPos} | mesh ${meshPos} | motor ${hingeMotor}`);
+
+      // extra diagnostics (angular velocity, last resolve info)
+      const angVel = (f._lastResolve && typeof f._lastResolve.angVel === 'number') ? f._lastResolve.angVel : ((f.angularVel||0).toFixed ? (f.angularVel||0).toFixed(2) : String(f.angularVel||0));
+      const prevA = (typeof f.prevAngle === 'number') ? ( (f.prevAngle*180/Math.PI).toFixed(1) + '°' ) : 'n/a';
+      const moving = (f._lastResolve && typeof f._lastResolve.isActivelySwingingUp !== 'undefined') ? String(!!f._lastResolve.isActivelySwingingUp) : 'n/a';
+      const lr = f._lastResolve || {};
+      const lrStr = lr && (typeof lr.distN !== 'undefined' || typeof lr.tClamped !== 'undefined') ? ` distN:${(lr.distN||0).toFixed(2)} t:${(lr.tClamped||0).toFixed(2)} along:${(lr.along||0).toFixed(2)}` : '';
+
+      lines.push(`${f.side}: phys ${degPhys}° vis ${degVis}° ${f.engaged? 'ENG':'   '} | angVel:${Number(angVel).toFixed ? Number(angVel).toFixed(2) : angVel} prev:${prevA} moveUp:${moving} | pivot ${pivotPos} | body ${bodyPos} | mesh ${meshPos} | motor ${hingeMotor}${lrStr}`);
     } catch (e) { lines.push(`${f.side}: err`); }
   }
   debugEl.innerText = lines.join('\n');
@@ -1815,6 +1823,15 @@ function resolveFlipperBall_V2(f, b) {
   // moving toward up if angVel sign matches delta sign and speed is above threshold
   const isActivelySwingingUp = (Math.sign(deltaToUp) === Math.sign(angVel)) && Math.abs(angVel) > 1.0;
 
+  // store quick diagnostics for the debug overlay
+  try {
+    f._lastResolve = f._lastResolve || {};
+    f._lastResolve.angVel = angVel;
+    f._lastResolve.curAngle = curAngle;
+    f._lastResolve.deltaToUp = deltaToUp;
+    f._lastResolve.isActivelySwingingUp = isActivelySwingingUp;
+  } catch (e) {}
+
   if (isActivelySwingingUp) {
     // Active Swing: Swept volume catch & explosive kick
     if (distN < reach + 0.2 && distN > -2.0) {
@@ -2156,5 +2173,13 @@ window._pinball = {
   updateScore,
   bodies,
   get ballsLeft() { return ballsLeft; },
-  get ballSaverUntil() { return ballSaverUntil; }
+  get ballSaverUntil() { return ballSaverUntil; },
+  // runtime helper to toggle the debug overlay if you forget the ?debug flag
+  toggleDebug() {
+    try {
+      const el = document.getElementById('debug-angles');
+      if (!el) return;
+      el.style.display = (el.style.display === 'none') ? 'block' : 'none';
+    } catch (e) { console.warn('toggleDebug failed', e); }
+  }
 };
