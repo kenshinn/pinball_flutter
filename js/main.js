@@ -1799,10 +1799,21 @@ function resolveFlipperBall_V2(f, b) {
   const distN = diffX * nx + diffZ * nz;
 
   // Determine if actively swinging upward (high angular velocity toward up-angle)
-  const angVel = f.angularVel || 0;
-  // Prefer a sign-safe test: check that angular velocity is large AND it's moving toward the upAngle
-  const movingTowardUp = Math.sign((f.upAngle || 0) - (f.prevAngle || 0)) === Math.sign(angVel);
-  const isActivelySwingingUp = movingTowardUp && Math.abs(angVel) > 1.0;
+  function normalizeAngle(a) {
+    while (a > Math.PI) a -= Math.PI * 2;
+    while (a < -Math.PI) a += Math.PI * 2;
+    return a;
+  }
+  // angular velocity: prefer tracked kinematic value, fall back to body angularVelocity.y
+  const angVel = (typeof f.angularVel === 'number') ? f.angularVel : (f.body && f.body.angularVelocity ? f.body.angularVelocity.y : 0);
+  // current angle: prefer f.angle (kinematic), else hinge.getAngle() when available
+  let curAngle = 0;
+  if (typeof f.angle === 'number') curAngle = f.angle;
+  else if (f.hinge && typeof f.hinge.getAngle === 'function') curAngle = f.hinge.getAngle();
+  // signed delta from current to the visual upAngle
+  const deltaToUp = normalizeAngle((f.upAngle || 0) - curAngle);
+  // moving toward up if angVel sign matches delta sign and speed is above threshold
+  const isActivelySwingingUp = (Math.sign(deltaToUp) === Math.sign(angVel)) && Math.abs(angVel) > 1.0;
 
   if (isActivelySwingingUp) {
     // Active Swing: Swept volume catch & explosive kick
