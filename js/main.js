@@ -1823,7 +1823,11 @@ function resolveFlipperBall_V2(f, b) {
   // signed delta from current to the visual upAngle
   const deltaToUp = normalizeAngle((f.upAngle || 0) - curAngle);
   // moving toward up if angVel sign matches delta sign and speed is above threshold
-  const isActivelySwingingUp = (Math.sign(deltaToUp) === Math.sign(angVel)) && Math.abs(angVel) > 1.0;
+  // RELAXED: lower threshold for right flipper (B) and accept large magnitude as active regardless of sign
+  const baseThreshold = 1.0;
+  const relaxedThreshold = (f.side === 'right') ? 0.5 : baseThreshold; // B = right flipper
+  const magnitudeOverride = 1.6; // if angular speed is very large, count as active even if sign mismatches
+  const isActivelySwingingUp = ((Math.sign(deltaToUp) === Math.sign(angVel)) && Math.abs(angVel) > relaxedThreshold) || (Math.abs(angVel) > magnitudeOverride);
 
   // store quick diagnostics for the debug overlay
   try {
@@ -1832,6 +1836,8 @@ function resolveFlipperBall_V2(f, b) {
     f._lastResolve.curAngle = curAngle;
     f._lastResolve.deltaToUp = deltaToUp;
     f._lastResolve.isActivelySwingingUp = isActivelySwingingUp;
+    f._lastResolve.relaxedThreshold = relaxedThreshold;
+    f._lastResolve.magnitudeOverride = magnitudeOverride;
   } catch (e) {}
 
   if (isActivelySwingingUp) {
