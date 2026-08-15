@@ -8,7 +8,32 @@
 
 主要檔案:[three_app/js/main.js](three_app/js/main.js)
 
-## 現況與相關程式碼(2026-08-14 更新:已改寫,見下方變更紀錄)
+## 擋板防穿模碰撞方案 (Solution V1 vs V2 註記與切換指南)
+
+主要檔案: [three_app/js/main.js](three_app/js/main.js) (搜尋 `FLIPPER_SOLVER_VERSION`)
+
+### 方案對照表
+
+| 特性 | Solution V2 (當前預設 `v2_capsule_swept`) | Solution V1 (舊版備份 `v1_discrete_kinematic`) |
+| :--- | :--- | :--- |
+| **碰撞原理** | **點到線段膠囊體解析投影 + 全深度掃掠** (Point-to-Segment Capsule Analytical Swept) | **離散 Kinematic Box 碰撞 + 簡單法向推力** (Discrete Box & Normal Offset) |
+| **Cannon 剛體排斥** | `body.collisionResponse = false` (防止薄 Box 穿透時反向往下排斥) | `body.collisionResponse = true` (使用 Cannon-es 預設剛體排斥) |
+| **揮擊動態捕獲** | 依據角速度與旋轉半徑賦予 $16 \sim 26$ 的徑向爆炸發射力 + 3D 火花 | 依據固定目標速度增加法向推力 |
+| **靜止/按住狀態** | 作為剛體實體牆 (Rigid Constraint)，提供 0.25 彈性反彈與滑動 | 依賴 Cannon 剛體 contact material |
+
+### 快速切換 / 回退到舊版 (Rollback Guide)
+
+若需切換回舊版 **Solution V1**：
+1. 開啟 [three_app/js/main.js](three_app/js/main.js)
+2. 將 `const FLIPPER_SOLVER_VERSION = 'v2_capsule_swept';` 修改為：
+   ```javascript
+   const FLIPPER_SOLVER_VERSION = 'v1_discrete_kinematic';
+   ```
+3. 在 `createFlipper()` 內將 `body.collisionResponse = false;` 改回 `body.collisionResponse = true;`。
+
+---
+
+## 現況與相關程式碼(2026-08-15 更新)
 
 flipper 已從 **dynamic body + HingeConstraint** 改寫為 **kinematic body + 繞垂直 Y 軸旋轉**。
 (舊 hinge 版不穩定:body 會脫離樞紐飛到桌面中央,已整段移除。)

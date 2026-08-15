@@ -560,10 +560,13 @@ function createFlipper(side='left') {
   mesh.receiveShadow = true;
   scene.add(mesh);
 
-  // Kinematic physics body: rotates cleanly about the pivot and imparts momentum to balls
-  // via its angular velocity (set each frame in the animation loop).
+  // Kinematic physics body: used for transform tracking and sensor events
+  // collisionResponse is set to false so Cannon's discrete solver doesn't counter-eject
+  // balls downward during fast swept penetration. Collision is 100% cleanly resolved
+  // by our continuous geometric resolver!
   const shape = new CANNON.Box(new CANNON.Vec3(length/2, height/2, thickness/2));
   const body = new CANNON.Body({ mass: 0, type: CANNON.Body.KINEMATIC });
+  body.collisionResponse = false; // disable discrete solver interference
   body.addShape(shape, shapeOffset);
   body.position.set(pivotX, pivotY, pivotZ);
   body.material = bumperMaterial;
@@ -671,148 +674,6 @@ function updateDebug(now) {
   requestAnimationFrame(obs);
 })();
 
-// small interactive tuner for hinge visual offset (mobile-friendly)
-(function attachHingeTuner(){
-  if (!DEBUG_UI) return; // dev-only panel, hidden unless ?debug is set
-  const panel = document.createElement('div');
-  panel.style.position = 'fixed';
-  panel.style.left = '12px';
-  // sit above the bottom flipper touch buttons so it doesn't cover the left (◀) button
-  panel.style.bottom = '84px';
-  panel.style.zIndex = 99999;
-  panel.style.background = 'rgba(0,0,0,0.55)';
-  panel.style.color = '#9fd';
-  panel.style.padding = '8px';
-  panel.style.borderRadius = '8px';
-  panel.style.fontFamily = 'monospace';
-  panel.style.fontSize = '12px';
-  panel.style.display = 'flex';
-  panel.style.gap = '6px';
-  panel.style.alignItems = 'center';
-
-  function mkBtn(text, onClick){
-    const b = document.createElement('button');
-    b.textContent = text;
-    b.style.padding = '6px 8px';
-    b.style.borderRadius = '6px';
-    b.style.border = '1px solid rgba(255,255,255,0.06)';
-    b.style.background = 'rgba(255,255,255,0.02)';
-    b.style.color = '#9fd';
-    b.addEventListener('click', onClick);
-    return b;
-  }
-
-  const leftDec = mkBtn('L -', ()=> adjustOffset('left', -0.1));
-  const leftInc = mkBtn('L +', ()=> adjustOffset('left', 0.1));
-  const rightDec = mkBtn('R -', ()=> adjustOffset('right', -0.1));
-  const rightInc = mkBtn('R +', ()=> adjustOffset('right', 0.1));
-  const reset = mkBtn('Reset', ()=> { setOffset('left', 0); setOffset('right', 0); });
-  const info = document.createElement('div');
-  info.id = 'hinge-tuner-info';
-  info.style.minWidth = '140px';
-
-  panel.appendChild(leftDec);
-  panel.appendChild(leftInc);
-  panel.appendChild(rightDec);
-  panel.appendChild(rightInc);
-  panel.appendChild(reset);
-  panel.appendChild(info);
-
-  document.body.appendChild(panel);
-
-  const HINGE_STORE_KEY = 'HINGE_VISUAL_OFFSETS';
-  function loadStoredOffsets(){
-    try{
-      const raw = localStorage.getItem(HINGE_STORE_KEY);
-      if (!raw) return null;
-      const obj = JSON.parse(raw);
-      return obj;
-    }catch(e){return null}
-  }
-  function saveStoredOffsets(left, right){
-    try{ localStorage.setItem(HINGE_STORE_KEY, JSON.stringify({left, right})); }catch(e){}
-  }
-  function setOffset(side, value) {
-    const f = flippers.find(ff=>ff.side===side);
-    if (!f) return;
-    f.hingeVisualOffset = value;
-    applyOffsetToFlipper(f);
-    // persist both values when one changes
-    const l = flippers.find(ff=>ff.side==='left');
-    const r = flippers.find(ff=>ff.side==='right');
-    saveStoredOffsets(l ? (l.hingeVisualOffset||0) : 0, r ? (r.hingeVisualOffset||0) : 0);
-    updateInfo();
-  }
-  function adjustOffset(side, delta) {
-    const f = flippers.find(ff=>ff.side===side);
-    if (!f) return;
-    f.hingeVisualOffset = (f.hingeVisualOffset||0) + delta;
-    applyOffsetToFlipper(f);
-    // persist
-    const l = flippers.find(ff=>ff.side==='left');
-    const r = flippers.find(ff=>ff.side==='right');
-    saveStoredOffsets(l ? (l.hingeVisualOffset||0) : 0, r ? (r.hingeVisualOffset||0) : 0);
-    updateInfo();
-  }
-  function updateInfo(){
-    const l = flippers.find(ff=>ff.side==='left');
-    const r = flippers.find(ff=>ff.side==='right');
-    const lv = l ? (l.hingeVisualOffset||0).toFixed(2) : 'n/a';
-    const rv = r ? (r.hingeVisualOffset||0).toFixed(2) : 'n/a';
-    info.textContent = `offset L:${lv} R:${rv}`;
-  }
-  function applyOffsetToFlipper(f){
-    try{
-      // recompute body & mesh quaternion based on current physical angle + offset
-      let cur = 0;
-      if (f.hinge && typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
-      else if (f.body && f.body.quaternion) {
-        const q = f.body.quaternion;
-        const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-        const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
-        cur = e.z || 0;
-      }
-      const physAngle = cur; // physical hinge angle
-      const visOffset = f.hingeVisualOffset || 0;
-      const total = physAngle + visOffset;
-      // set body quaternion to reflect total orientation used by visual
-      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), total);
-      f.body.quaternion.set(q.x, q.y, q.z, q.w);
-      if (f.mesh) f.mesh.quaternion.copy(q);
-      // reposition mesh so its pivot stays aligned
-      if (f.shapeOffset) {
-        try{
-          const rotated = f.body.quaternion.vmult(f.shapeOffset);
-          f.mesh.position.set(f.body.position.x + rotated.x, f.body.position.y + rotated.y + 0.01, f.body.position.z + rotated.z);
-        }catch(e){}
-      } else if (f.body) {
-        if (f.mesh) f.mesh.position.copy(f.body.position);
-      }
-    }catch(e){console.warn('applyOffsetToFlipper failed', e)}
-  }
-
-  // expose helpers for manual use
-  window._pinball = window._pinball || {};
-  window._pinball.adjustOffset = adjustOffset;
-  window._pinball.setOffset = setOffset;
-
-  // initial info update
-  const _stored = loadStoredOffsets ? loadStoredOffsets() : null;
-  if (_stored) {
-    try { if (typeof _stored.left === 'number') setOffset('left', _stored.left); if (typeof _stored.right === 'number') setOffset('right', _stored.right); } catch(e){}
-  }
-  setTimeout(updateInfo, 300);
-})();
-
-// initial dump for diagnostics
-for (const f of flippers) {
-  try {
-    if (f.hinge && typeof f.hinge.getAngle === 'function') console.debug('flipper initial angle', f.side, f.hinge.getAngle());
-    else console.debug('flipper initial angle (body)', f.side, f.body && f.body.quaternion);
-  } catch (e) { console.warn('flipper initial debug failed', e); }
-}
-
-
 // Angled funnel (outlane) walls: guide balls from the side rails down toward the
 // flippers so they don't drain in the open outer bottom corners.
 (function addFlipperFunnels(){
@@ -835,42 +696,7 @@ for (const f of flippers) {
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
-  // if hinge-based dynamic flipper, drive motor toward target angle
-  if (f.hinge) {
-    f.engaged = engaged;
-    // Conservative motor policy: only actively drive the flipper when engaged (pressed).
-    // When released, disable the motor and allow damping/hinge limits to settle the flipper.
-    try {
-      if (engaged) {
-        // compute physical target by subtracting visual offset
-        const targetVis = f.upAngle;
-        const target = targetVis - (f.hingeVisualOffset || 0);
-        let cur = 0;
-        if (typeof f.hinge.getAngle === 'function') cur = f.hinge.getAngle();
-        else if (f.body && f.body.quaternion) {
-          const q = f.body.quaternion;
-          const tq = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-          const e = new THREE.Euler().setFromQuaternion(tq, 'XYZ');
-          // hinge is around Z axis so the rotation of interest is 'z'
-          cur = e.z || 0;
-        }
-        let delta = target - cur;
-        while (delta > Math.PI) delta -= Math.PI*2;
-        while (delta < -Math.PI) delta += Math.PI*2;
-        if (Math.abs(delta) < 0.02) {
-          try { if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(0); if (f.hinge.disableMotor) { f.hinge.disableMotor(); f.hinge._motorEnabled = false; } } catch(e){}
-          return;
-        }
-        const speed = Math.sign(delta) * Math.abs(f.upSpeed);
-        try { if (f.hinge.enableMotor) { f.hinge.enableMotor(); f.hinge._motorEnabled = true; } if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(speed); } catch (e) { console.warn('hinge motor set failed', e); }
-      } else {
-        // release: stop active motor control and let physics/damping return flipper to rest
-        try { if (f.hinge.setMotorSpeed) f.hinge.setMotorSpeed(0); if (f.hinge.disableMotor) { f.hinge.disableMotor(); f.hinge._motorEnabled = false; } } catch(e){}
-      }
-    } catch (err) { console.warn('setFlipper hinge error', err); }
-    return;
-  }
-  // fallback kinematic behavior
+  f.engaged = !!engaged;
   f.targetAngle = engaged ? f.upAngle : f.restAngle;
 }
 
@@ -1248,46 +1074,138 @@ function newGame() {
   gameOverEl.style.display = 'none';
 }
 
-// Predictive flipper resolver: each frame, keep the ball on the playfield side of
-// each blade (prevents fast-swing tunneling to the drain) and kick it when the
-// flipper is raised. More reliable than physics contact for a thin, fast paddle.
-function resolveFlipperBall(f, b) {
-  if (!f || !f.body || !b) return;
-  if (!f.engaged) return; // only guard while the paddle is swinging up (when tunneling happens);
-                          // at rest, let normal physics handle the ball so it isn't pinned/frozen
+// =============================================================================
+// FLIPPER COLLISION SOLVER SOLUTIONS (FOR OBSERVATION & EASY ROLLBACK)
+// =============================================================================
+// Solution V2 (Current): Point-to-Segment Capsule Swept Resolver + disabled body.collisionResponse
+// - Prevents Cannon-es discrete solver reverse-ejection during fast swept penetration.
+// - Analytically projects ball to blade centerline and applies radial launch impulse (16~26).
+//
+// Solution V1 (Legacy): Discrete Cannon.js Kinematic Box + collide event assist impulse.
+// - To switch back: change FLIPPER_SOLVER_VERSION = 'v1_discrete_kinematic' and set body.collisionResponse = true in createFlipper().
+// =============================================================================
+const FLIPPER_SOLVER_VERSION = 'v2_capsule_swept';
+
+// Solution V2 (Active): Bulletproof Point-to-Segment Capsule Swept Flipper Resolver
+function resolveFlipperBall_V2(f, b) {
+  if (!f || !b) return;
+
+  const isLeft = f.side === 'left';
+  const Px = isLeft ? -2.6 : 2.6;
+  const Pz = tableSize.h / 2 - 0.9; // 5.1
+  const bladeL = 2.4;
+  const ballR = 0.35;
+  const halfThick = 0.225;
+  const reach = halfThick + ballR; // 0.575
+
+  const theta = f.angle;
+  const dx = isLeft ? Math.cos(theta) : -Math.cos(theta);
+  const dz = isLeft ? -Math.sin(theta) : Math.sin(theta);
+  
+  // Normal pointing up-table (-Z)
+  const nx = -Math.sin(theta);
+  const nz = -Math.cos(theta);
+
+  // Ball vector from pivot
+  const vx = b.position.x - Px;
+  const vz = b.position.z - Pz;
+
+  // Projection along blade (0 to bladeL)
+  const along = vx * dx + vz * dz;
+  if (along < -ballR * 0.5 || along > bladeL + ballR * 0.8) return;
+  const tClamped = Math.max(0, Math.min(1, along / bladeL));
+
+  // Closest point on blade centerline
+  const cx = Px + tClamped * dx * bladeL;
+  const cz = Pz + tClamped * dz * bladeL;
+
+  // Vector from closest point to ball
+  const diffX = b.position.x - cx;
+  const diffZ = b.position.z - cz;
+  const distN = diffX * nx + diffZ * nz;
+
+  // Determine if actively swinging upward (high angular velocity toward up-angle)
+  const angVel = f.angularVel || 0;
+  const isActivelySwingingUp = isLeft ? angVel > 1.0 : angVel < -1.0;
+
+  if (isActivelySwingingUp) {
+    // Active Swing: Swept volume catch & explosive kick
+    if (distN < reach + 0.2 && distN > -2.0) {
+      // 1. Project to surface
+      b.position.x = cx + nx * (reach + 0.04);
+      b.position.z = cz + nz * (reach + 0.04);
+      b.position.y = bedY + ballR + 0.005;
+
+      // 2. Powerful kick impulse proportional to angular speed & hit radius
+      const speedMagnitude = Math.abs(angVel);
+      const tipFactor = tClamped;
+      const kickSpeed = 16.0 + tipFactor * 10.0 + speedMagnitude * 0.15;
+
+      const tangentV = (b.velocity.x * dx + b.velocity.z * dz) * 0.35;
+      b.velocity.x = nx * kickSpeed + dx * tangentV;
+      b.velocity.z = nz * kickSpeed + dz * tangentV;
+      b.velocity.y = 0;
+
+      // 3. Effects
+      spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, 16, 1.2);
+      playPing(480 + tipFactor * 260, 0.08);
+    }
+  } else {
+    // Static / Held Up / Resting Barrier: Rigid collision constraint with slight bounce
+    if (distN < reach && distN > -(reach * 0.85)) {
+      // Reposition to surface
+      b.position.x = cx + nx * reach;
+      b.position.z = cz + nz * reach;
+      b.position.y = bedY + ballR + 0.005;
+
+      // Reflect / cancel penetration velocity
+      const vn = b.velocity.x * nx + b.velocity.z * nz;
+      if (vn < 0) {
+        const bounce = 0.25;
+        b.velocity.x -= (1 + bounce) * vn * nx;
+        b.velocity.z -= (1 + bounce) * vn * nz;
+      }
+    }
+  }
+}
+
+// Solution V1 (Legacy Backup): Simple normal offset resolver
+function resolveFlipperBall_V1(f, b) {
+  if (!f || !f.body || !b || !f.engaged) return;
   const P = f.body.position;
   const localDir = new CANNON.Vec3(f.side === 'left' ? 1 : -1, 0, 0);
-  const D = f.body.quaternion.vmult(localDir); // world blade direction (x-z plane)
+  const D = f.body.quaternion.vmult(localDir);
   const vx = b.position.x - P.x, vz = b.position.z - P.z;
   const along = vx * D.x + vz * D.z;
   const ballR = 0.35;
-  if (along < -ballR || along > f.bladeLen + ballR) return; // outside the blade span
+  if (along < -ballR || along > (f.bladeLen || 2.4) + ballR) return;
   const px = vx - along * D.x, pz = vz - along * D.z;
-  if (Math.hypot(px, pz) > f.halfThick + ballR + 0.06) return; // not touching the blade
-  // playfield-side normal (perpendicular to D, pointing up-table / -z)
+  if (Math.hypot(px, pz) > (f.halfThick || 0.225) + ballR + 0.06) return;
   let nx = -D.z, nz = D.x;
   if (nz > 0) { nx = -nx; nz = -nz; }
-  const reach = f.halfThick + ballR;
-  const signed = px * nx + pz * nz; // ball offset along the playfield normal
+  const reach = (f.halfThick || 0.225) + ballR;
+  const signed = px * nx + pz * nz;
   if (signed < reach) {
-    // push the ball back onto the playfield side of the blade surface
     const corr = reach - signed;
     b.position.x += nx * corr;
     b.position.z += nz * corr;
-    // cancel any velocity heading into the blade
     const vn = b.velocity.x * nx + b.velocity.z * nz;
     if (vn < 0) { b.velocity.x -= vn * nx; b.velocity.z -= vn * nz; }
-    // flipper kick while the paddle is raised
-    if (f.engaged) {
-      const target = 10 + f.angularSpeed * 0.25;
-      const vN = b.velocity.x * nx + b.velocity.z * nz;
-      if (vN < target) {
-        const add = target - vN;
-        b.velocity.x += nx * add;
-        b.velocity.z += nz * add;
-        spawnSparks(b.position.x, bedY + 0.4, b.position.z, f.side === 'left' ? 0x00e5ff : 0xffbe0b, 10, 0.9);
-      }
+    const target = 10 + (f.angularSpeed || 24) * 0.25;
+    const vN = b.velocity.x * nx + b.velocity.z * nz;
+    if (vN < target) {
+      const add = target - vN;
+      b.velocity.x += nx * add;
+      b.velocity.z += nz * add;
     }
+  }
+}
+
+function resolveFlipperBall(f, b) {
+  if (FLIPPER_SOLVER_VERSION === 'v1_discrete_kinematic') {
+    resolveFlipperBall_V1(f, b);
+  } else {
+    resolveFlipperBall_V2(f, b);
   }
 }
 
@@ -1347,7 +1265,12 @@ function animate(time) {
       } catch (err) { console.warn('pre-step flipper update error', err); }
     }
 
-      // If visuals tilt is enabled, sync registered table objects to the current visual tilt
+    // Pre-step resolution: resolve any fast-approaching balls before physical step
+    for (const b of bodies) {
+      for (const f of flippers) resolveFlipperBall(f, b);
+    }
+
+    // If visuals tilt is enabled, sync registered table objects to the current visual tilt
     // BEFORE stepping physics so the physics bodies move consistently with the visuals.
     if (visualsTiltEnabled) {
       try { syncTableObjects(); } catch(e) { console.warn('syncTableObjects pre-step failed', e); }

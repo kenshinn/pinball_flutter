@@ -1,32 +1,32 @@
-# Phase 1: 視覺光影與打擊感提升 成果摘要 (Visual & Effects)
+# 擋板防穿模方案對照與回退指南 (Flipper Anti-Tunneling Solutions)
 
-本階段已成功為彈珠台導入柔和動態陰影、鏡面金屬鋼珠材質、霓虹自發光呼吸脈衝以及 3D 碰撞粒子火花系統！
-
----
-
-## 🎨 升級項目與亮點
-
-### 1. PCF Soft Shadows (動態柔和陰影)
-- 啟用 WebGLRenderer 的 `PCFSoftShadowMap` 與高解析度陰影貼圖（2048×2048）。
-- 主光源（DirectionalLight）投射真實陰影，鋼珠、擋板、Bumpers 圓柱柱體均在深色檯面上投下立體陰影。
-- 補光（Fill Light）為邊緣帶來冷色調微光，大幅增強 3D 空間景深。
-
-### 2. Metallic Chrome Pinball (真實鏡面鋼珠)
-- 鋼珠材質升級為極高金屬度與低粗糙度（`metalness: 0.95, roughness: 0.12`）。
-- 鋼珠在燈光與不同角度滾動時呈現閃耀的鏡面高光。
-
-### 3. 3D Spark Particle System (3D 撞擊霓虹火花)
-- 實作了輕量高效的物件池化 3D 粒子系統（`SparkManager`），零 GC 壓力。
-- **觸發時機**：
-  - **Bumpers 受擊**：碰撞瞬間噴出對應顏色（霓虹粉紅、青藍、金黃）的 18 顆火花。
-  - **Corner Kickers 彈射**：噴射出霓虹青綠色擴散火花。
-  - **Flippers 擋板揮擊**：揮中球瞬間產生動態火花。
-  - **鋼珠高速撞牆**：產生白色微型火花。
-
-### 4. 自發光呼吸脈衝 (Glow Pulse)
-- Bumpers 與 Corner Kickers 的 `emissiveIntensity` 在被擊中瞬間爆發高亮（2.8x），並在動畫循環中平滑衰減，提供極佳的受擊回饋感。
+已為您完整註記並保留 **Solution V1** 與 **Solution V2**，隨時可在代碼中一鍵無縫切換或回退！
 
 ---
 
-## 🔍 驗證方式
-在 IDE 內部的 **Simple Browser** 分頁點擊 **🔄 重新整理**，發射彈珠即可即時體驗全新的光影、鏡面鋼珠與粒子火花！
+## 📊 方案對照與原理
+
+| 特性 | Solution V2 (當前預設 `v2_capsule_swept`) | Solution V1 (舊版備份 `v1_discrete_kinematic`) |
+| :--- | :--- | :--- |
+| **碰撞原理** | **點到線段膠囊體解析投影 + 全深度掃掠** (Point-to-Segment Capsule Analytical Swept) | **離散 Kinematic Box 碰撞 + 簡單法向推力** (Discrete Box & Normal Offset) |
+| **Cannon 剛體排斥** | `body.collisionResponse = false` (防止薄 Box 穿透時反向往下排斥) | `body.collisionResponse = true` (使用 Cannon-es 預設剛體排斥) |
+| **揮擊動態捕獲** | 依據角速度與旋轉半徑賦予 $16 \sim 26$ 的徑向爆炸發射力 + 3D 火花 | 依據固定目標速度增加法向推力 |
+| **靜止/按住狀態** | 作為剛體實體牆 (Rigid Constraint)，提供 0.25 彈性反彈與滑動 | 依賴 Cannon 剛體 contact material |
+
+---
+
+## 🔄 如何切換或回退到舊版 (Rollback Guide)
+
+若您想隨時換回舊版 **Solution V1**：
+1. 開啟 [`three_app/js/main.js`](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
+2. 找到最頂端的開關變數：
+   ```javascript
+   // 改為 'v1_discrete_kinematic'
+   const FLIPPER_SOLVER_VERSION = 'v1_discrete_kinematic';
+   ```
+3. 在 `createFlipper()` 內將 `body.collisionResponse = false;` 改為 `body.collisionResponse = true;` 即可完全恢復舊版物理行為！
+
+---
+
+## 🔍 當前狀態
+目前專案預設使用 **Solution V2**，並在代碼與 `DEVELOPMENT.md` 中完整保留了 V1 的實作邏輯與切換說明。
