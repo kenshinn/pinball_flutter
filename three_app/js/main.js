@@ -79,13 +79,102 @@ const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerH
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 container.appendChild(renderer.domElement);
 
-const ambient = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
+const ambient = new THREE.HemisphereLight(0xddeeff, 0x181824, 0.65);
 scene.add(ambient);
-const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-dir.position.set(5, 10, 5);
+
+// Key light with sharp yet soft shadows
+const dir = new THREE.DirectionalLight(0xfffaed, 1.15);
+dir.position.set(6, 15, 8);
+dir.castShadow = true;
+dir.shadow.mapSize.width = 2048;
+dir.shadow.mapSize.height = 2048;
+dir.shadow.camera.near = 0.5;
+dir.shadow.camera.far = 35;
+const d = 9.0;
+dir.shadow.camera.left = -d;
+dir.shadow.camera.right = d;
+dir.shadow.camera.top = d;
+dir.shadow.camera.bottom = -d;
+dir.shadow.bias = -0.0004;
+dir.shadow.normalBias = 0.02;
 scene.add(dir);
+
+// Fill light for soft blue rim highlights
+const fillLight = new THREE.DirectionalLight(0x5588cc, 0.45);
+fillLight.position.set(-6, 10, -6);
+scene.add(fillLight);
+
+// --- 3D Spark Particle System ---
+const MAX_SPARKS = 140;
+const sparkGeo = new THREE.SphereGeometry(0.06, 6, 6);
+const sparkPool = [];
+const sparkGroup = new THREE.Group();
+scene.add(sparkGroup);
+
+for (let i = 0; i < MAX_SPARKS; i++) {
+  const sm = new THREE.Mesh(sparkGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1 }));
+  sm.visible = false;
+  sparkGroup.add(sm);
+  sparkPool.push({
+    mesh: sm,
+    vel: new THREE.Vector3(),
+    life: 0,
+    maxLife: 0.4,
+  });
+}
+
+function spawnSparks(x, y, z, colorHex = 0x00ffff, count = 16, speedMult = 1.0) {
+  let spawned = 0;
+  for (const sp of sparkPool) {
+    if (sp.life <= 0) {
+      sp.mesh.visible = true;
+      sp.mesh.position.set(
+        x + (Math.random() - 0.5) * 0.25,
+        y + 0.05 + (Math.random() - 0.5) * 0.1,
+        z + (Math.random() - 0.5) * 0.25
+      );
+      sp.mesh.material.color.setHex(colorHex);
+      sp.mesh.material.opacity = 1;
+      sp.mesh.scale.setScalar(0.8 + Math.random() * 0.6);
+
+      const angle = Math.random() * Math.PI * 2;
+      const horizSpeed = (2.5 + Math.random() * 5.0) * speedMult;
+      sp.vel.set(
+        Math.cos(angle) * horizSpeed,
+        1.5 + Math.random() * 3.5,
+        Math.sin(angle) * horizSpeed
+      );
+      sp.maxLife = 0.25 + Math.random() * 0.25;
+      sp.life = sp.maxLife;
+      spawned++;
+      if (spawned >= count) break;
+    }
+  }
+}
+
+function updateSparks(dt) {
+  for (const sp of sparkPool) {
+    if (sp.life > 0) {
+      sp.life -= dt;
+      if (sp.life <= 0) {
+        sp.mesh.visible = false;
+      } else {
+        sp.mesh.position.x += sp.vel.x * dt;
+        sp.mesh.position.y += sp.vel.y * dt;
+        sp.mesh.position.z += sp.vel.z * dt;
+        sp.vel.y -= 9.8 * dt; // gravity
+        const progress = sp.life / sp.maxLife;
+        sp.mesh.material.opacity = progress;
+        sp.mesh.scale.setScalar(progress * 1.1);
+      }
+    }
+  }
+}
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -199,16 +288,22 @@ function addWall(pos, quat, size, options = {}) {
   // visual mesh (optional, default true)
   let mesh = null;
   if (options.visual !== false) {
-    const mat = new THREE.MeshStandardMaterial({ color: options.color || 0x444444, metalness: 0.1, roughness: 0.7 });
+    const mat = new THREE.MeshStandardMaterial({
+      color: options.color || 0x334455,
+      metalness: options.metalness || 0.4,
+      roughness: options.roughness || 0.5,
+      emissive: options.emissive || 0x05101a,
+      emissiveIntensity: options.emissiveIntensity || 0.2
+    });
     const geo = new THREE.BoxGeometry(size.x, size.y, size.z);
     mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(pos.x, pos.y, pos.z);
     mesh.quaternion.setFromEuler(new THREE.Euler(quat.x, quat.y, quat.z, 'XYZ'));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     // attach visuals into tableGroup so we can tilt them together
     if (typeof tableGroup !== 'undefined') tableGroup.add(mesh); else scene.add(mesh);
   }
-
-
 }
 
 
@@ -220,7 +315,13 @@ addWall({ x: 0, y: bedY - bedThickness/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: tab
 
 // Visual floor (match the bed)
 const floorGeo = new THREE.PlaneGeometry(tableSize.w + 2, tableSize.h + 2);
-const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222, metalness:0.2, roughness:0.8 });
+const floorMat = new THREE.MeshStandardMaterial({
+  color: 0x161820,
+  metalness: 0.2,
+  roughness: 0.75,
+  emissive: 0x080a10,
+  emissiveIntensity: 0.15
+});
 // prevent z-fighting by enabling polygon offset on the material
 floorMat.polygonOffset = true;
 floorMat.polygonOffsetFactor = 1.0;
@@ -240,14 +341,14 @@ tableGroup.add(floorMesh);
 const sideRailHeight = 2.0;
 const sideRailThickness = 0.5;
 const sideRailX = tableSize.w/2 + 0.75; // sits along the visible floor edge
-addWall({ x: -sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
-addWall({ x:  sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x556677 });
+addWall({ x: -sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x3d5066, metalness: 0.6, roughness: 0.35, emissive: 0x0a1a2e, emissiveIntensity: 0.4 });
+addWall({ x:  sideRailX, y: bedY + sideRailHeight/2, z: 0 }, { x: 0, y: 0, z: 0 }, { x: sideRailThickness, y: sideRailHeight, z: tableSize.h }, { color: 0x3d5066, metalness: 0.6, roughness: 0.35, emissive: 0x0a1a2e, emissiveIntensity: 0.4 });
 
 // Tall back wall along the TOP edge (behind the bumpers) so balls can't fly out
 // the back when they spawn from above or get launched by a hard hit. Spans the
 // full width between the side rails.
 const backWallHeight = 3.0;
-addWall({ x: 0, y: bedY + backWallHeight/2, z: -tableSize.h/2 + 0.5 }, { x: 0, y: 0, z: 0 }, { x: 2 * sideRailX, y: backWallHeight, z: 0.5 }, { color: 0x50607a });
+addWall({ x: 0, y: bedY + backWallHeight/2, z: -tableSize.h/2 + 0.5 }, { x: 0, y: 0, z: 0 }, { x: 2 * sideRailX, y: backWallHeight, z: 0.5 }, { color: 0x2d3a4d, metalness: 0.5, roughness: 0.4 });
 
 // create some spherical bumpers (visual + invisible physics)
 // Pop-bumper kick strength (horizontal impulse applied when the ball hits a bumper).
@@ -256,13 +357,21 @@ addWall({ x: 0, y: bedY + backWallHeight/2, z: -tableSize.h/2 + 0.5 }, { x: 0, y
 const BUMPER_POP = 11;
 const BUMPER_COOLDOWN_MS = 150; // per-ball, per-bumper gate for pop + scoring
 const bumpers = [];
-function createBumper(x,z,r=0.6, points=100) {
+function createBumper(x,z,r=0.6, points=100, colorHex=0xff3366, emissiveHex=0xff1144) {
   // create a vertical cylinder (post) rooted on the bed so balls bounce off a grounded post
   const height = 1.2;
-  const mat = new THREE.MeshStandardMaterial({ color: 0xff6b6b, emissive:0xff4422, emissiveIntensity: 0.12, roughness:0.35, metalness:0.2 });
-  const geo = new THREE.CylinderGeometry(r, r, height, 24);
+  const mat = new THREE.MeshStandardMaterial({
+    color: colorHex,
+    emissive: emissiveHex,
+    emissiveIntensity: 0.25,
+    roughness: 0.25,
+    metalness: 0.45
+  });
+  const geo = new THREE.CylinderGeometry(r, r, height, 32);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(x, bedY + height/2, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   // attach bumper visuals to tableGroup so they tilt visually
   tableGroup.add(mesh);
 
@@ -285,11 +394,7 @@ function createBumper(x,z,r=0.6, points=100) {
     console.warn('failed to sync bumper visual quaternion', err);
   }
 
-  // Reliable hit detection via the physics collide event (catches fast balls the
-  // per-frame proximity check can skip). The proximity check in the animation loop
-  // is a fallback that also un-sticks resting balls. Both go through hitBumper(),
-  // which debounces per ball+bumper so a hit isn't counted twice.
-  const bp = { body, mesh, mat, points, r, flash: 0 };
+  const bp = { body, mesh, mat, points, r, flash: 0, baseColor: colorHex };
   body.addEventListener('collide', (e) => { if (e.body && e.body._isBall) hitBumper(bp, e.body); });
   bumpers.push(bp);
   // register so bumpers follow visual table tilt (syncTableObjects will update body/mesh)
@@ -298,9 +403,9 @@ function createBumper(x,z,r=0.6, points=100) {
 
 // Bumpers form a triangle in the UPPER playfield (negative z, toward the top ramp)
 // so the lower/middle of the table stays clear for the ball to flow to the flippers.
-createBumper(-1.8, -2.2, 0.6, 100);
-createBumper( 1.8, -2.2, 0.6, 100);
-createBumper( 0.0, -3.8, 0.6, 150);
+createBumper(-1.8, -2.2, 0.6, 100, 0xff2a6d, 0xff0055);
+createBumper( 1.8, -2.2, 0.6, 100, 0x05d9e8, 0x00b4d8);
+createBumper( 0.0, -3.8, 0.6, 150, 0xffbe0b, 0xfb5607);
 
 // Corner kickers: if the ball wanders into a dead top corner, fire it back toward
 // the lower-centre (with random spread) plus points + FX, so corners aren't boring.
@@ -312,9 +417,18 @@ const kickers = [
   { x:  (tableSize.w / 2 + 0.2), z: -tableSize.h / 2 + 1.6, points: 250, flash: 0 },
 ];
 for (const K of kickers) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0x33ffcc, emissive: 0x0affcc, emissiveIntensity: 0.4, transparent: true, opacity: 0.55 });
-  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(KICKER_RADIUS * 0.7, KICKER_RADIUS * 0.7, 0.12, 28), mat);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x00f5d4,
+    emissive: 0x00bbf9,
+    emissiveIntensity: 0.5,
+    transparent: true,
+    opacity: 0.75,
+    roughness: 0.3,
+    metalness: 0.5
+  });
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(KICKER_RADIUS * 0.7, KICKER_RADIUS * 0.7, 0.12, 32), mat);
   mesh.position.set(K.x, bedY + 0.07, K.z);
+  mesh.receiveShadow = true;
   tableGroup.add(mesh);
   K.mesh = mesh; K.mat = mat;
 }
@@ -329,13 +443,21 @@ function kickerLaunchVelocity(K) {
   return { x: rx * pop, y: 0, z: rz * pop };
 }
 
-// Ball spawn
+// Ball spawn (High metalness chrome ball with soft highlights)
 let ballCount = 0;
 function spawnBall(pos, vel) {
   const radius = 0.35;
-  const sphereGeo = new THREE.SphereGeometry(radius, 24, 24);
-  const sphereMat = new THREE.MeshStandardMaterial({ color: 0x88ccff, metalness:0.5, roughness:0.25 });
+  const sphereGeo = new THREE.SphereGeometry(radius, 32, 24);
+  const sphereMat = new THREE.MeshStandardMaterial({
+    color: 0xf0f3f8,
+    metalness: 0.95,
+    roughness: 0.12,
+    emissive: 0x112233,
+    emissiveIntensity: 0.2
+  });
   const mesh = new THREE.Mesh(sphereGeo, sphereMat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = false;
   mesh.scale.set(1,1,1);
   scene.add(mesh);
 
@@ -357,7 +479,9 @@ function spawnBall(pos, vel) {
         const vel = e.contact.getImpactVelocityAlongNormal();
         const vol = Math.min(Math.abs(vel)/8, 1);
         playPing(200 + Math.random()*600, 0.04 + Math.random()*0.05);
-        console.debug('Ball collide', { ballId: body.id, vel });
+        if (Math.abs(vel) > 3.0) {
+          spawnSparks(body.position.x, body.position.y, body.position.z, 0xffffff, 8, 0.7);
+        }
       }
     } catch (err) {
       console.warn('ball collide handler error', err);
@@ -394,6 +518,7 @@ function spawnAtCenter() {
   // suppress the kicker's scoring for this serve (ball starts inside the kicker zone)
   if (body) { body._kickerAt = {}; body._kickerAt[ki] = performance.now(); }
   K.flash = 1;
+  spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 20, 1.2);
   playPing(300 + Math.random() * 120, 0.1);
 }
 
@@ -422,9 +547,17 @@ function createFlipper(side='left') {
   // then the mesh transform can share the physics body's position/quaternion directly.
   const geo = new THREE.BoxGeometry(length, height, thickness);
   geo.translate(shapeOffset.x, shapeOffset.y, shapeOffset.z);
-  const mat = new THREE.MeshStandardMaterial({ color: isLeft ? 0x66d9ff : 0xffd66b, metalness:0.5, roughness:0.4 });
+  const mat = new THREE.MeshStandardMaterial({
+    color: isLeft ? 0x00e5ff : 0xffbe0b,
+    metalness: 0.55,
+    roughness: 0.35,
+    emissive: isLeft ? 0x007799 : 0x996600,
+    emissiveIntensity: 0.35
+  });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.set(pivotX, pivotY, pivotZ);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   scene.add(mesh);
 
   // Kinematic physics body: rotates cleanly about the pivot and imparts momentum to balls
@@ -1068,6 +1201,8 @@ function hitBumper(bp, ball) {
   const dz = ball.position.z - bp.body.position.z;
   const d = Math.hypot(dx, dz) || 1;
   if (ball.applyImpulse) ball.applyImpulse(new CANNON.Vec3((dx / d) * pop, 0, (dz / d) * pop), ball.position);
+  // Spawn 3D spark particles on bumper hit
+  spawnSparks(bp.body.position.x, bedY + 0.6, bp.body.position.z, bp.baseColor || 0xff0077, 18, 1.3);
 }
 
 const gameOverEl = document.createElement('div');
@@ -1146,7 +1281,12 @@ function resolveFlipperBall(f, b) {
     if (f.engaged) {
       const target = 10 + f.angularSpeed * 0.25;
       const vN = b.velocity.x * nx + b.velocity.z * nz;
-      if (vN < target) { const add = target - vN; b.velocity.x += nx * add; b.velocity.z += nz * add; }
+      if (vN < target) {
+        const add = target - vN;
+        b.velocity.x += nx * add;
+        b.velocity.z += nz * add;
+        spawnSparks(b.position.x, bedY + 0.4, b.position.z, f.side === 'left' ? 0x00e5ff : 0xffbe0b, 10, 0.9);
+      }
     }
   }
 }
@@ -1292,6 +1432,7 @@ function animate(time) {
             triggerScreenFlash(0.14);
             playPing(320 + Math.random() * 160, 0.12);
             K.flash = 1;
+            spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 22, 1.3);
           }
         }
       }
@@ -1302,17 +1443,20 @@ function animate(time) {
       m.quaternion.copy(b.quaternion);
     }
 
+    // update 3D spark particles
+    updateSparks(dt);
+
     // decay bumper hit pulse (visual feedback: emissive flash + radius pulse)
     for (const bp of bumpers) {
       if (bp.flash > 0) bp.flash = Math.max(0, bp.flash - dt * 4);
       const s = 1 + bp.flash * 0.3;
       bp.mesh.scale.set(s, 1, s);
-      if (bp.mat) bp.mat.emissiveIntensity = 0.12 + bp.flash * 2.0;
+      if (bp.mat) bp.mat.emissiveIntensity = 0.25 + bp.flash * 2.8;
     }
     // decay corner-kicker pad pulse
     for (const K of kickers) {
       if (K.flash > 0) K.flash = Math.max(0, K.flash - dt * 3);
-      if (K.mat) K.mat.emissiveIntensity = 0.4 + K.flash * 2.5;
+      if (K.mat) K.mat.emissiveIntensity = 0.5 + K.flash * 2.8;
       const ks = 1 + K.flash * 0.2;
       if (K.mesh) K.mesh.scale.set(ks, 1, ks);
     }
