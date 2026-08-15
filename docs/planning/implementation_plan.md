@@ -1,14 +1,14 @@
-# Phase 5: 可擊倒靶位與頂部球道燈 (Drop Targets & Rollover Lanes)
+# 擋板短按/長按動態力道系統 (Progressive Flipper Physics & Power Scaling)
 
-本計畫旨在引進實體大型彈珠台最具可玩性與策略深度的兩大經典機關：**左側 3 連可擊倒落靶 (3-Bank Drop Targets)** 與 **頂部 A-B-C 球道燈 (Top Rollover Lanes with Lane Change)**，為玩家提供明確的打靶目標與倍率累積成就感。
+本計畫旨在透過**按壓時間感知（Hold-duration Dynamic Acceleration）**與**可變角速度/衝力權重模型（Progressive Impulse & Tangent Curve）**，徹底解決擋板瞬間衝頂與出球角度死板的問題，實現實體彈珠台經典的「短按輕挑傳球 (Soft Tap / Feathering)」與「長按重砲擊發 (Power Smash)」！
 
 ---
 
 ## User Review Required
 
-> [!NOTE]
-> - **無縫整合現有物理與渲染**：所有落靶下沉動畫、球道感應與光影粒子皆在 Three.js + Cannon-es 既有架構下高效率執行，零外部模型載入延遲。
-> - **支援彈珠台經典神技「Lane Change」**：揮動左/右擋板時，頂部已點亮的燈位會即時左右輪轉切換，讓玩家可主動控燈接球！
+> [!IMPORTANT]
+> - **短按 (Quick Tap / Feathering)**：按住時間極短（< 50ms）時，擋板從溫和的角速度（`12 rad/s`）起步，若提早放開會在半行程平滑回彈，擊球力道溫和（`10 ~ 16`），保留球體滾動切線慣性，極度適合細膩微操與雙擋板互傳。
+> - **長按 (Firm Press / Power Smash)**：按住時角速度在 90ms 內迅速加速至極限（`30 rad/s`），全力衝至最大角度，擊球力道暴增（`18 ~ 32`），球如火箭般直衝頂部通道與目標靶位！
 
 ---
 
@@ -16,27 +16,29 @@
 
 ### [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
 
-#### 1. 🎯 左側 3 連可擊倒落靶 (3-Bank Drop Targets)
-- **位置與外觀**：位於左側中段（$X = -3.1, Z \in [-0.6, 0.2, 1.0]$），3 個亮黃霓虹立體靶位。
-- **打擊機制**：
-  - 球撞擊單靶時：靶位「啪！」地快速沉入地面下（下沉動畫），物理阻擋暫時停用，獎勵 **+250 分**、火花粒子與機械擊倒音效。
-  - **全靶擊倒 (Bank Cleared)**：3 靶全倒時觸發 **`🎯 TARGETS CLEARED! +2,000`** 特效與雙重震感，1 秒後全體自動彈回地面重置！
+#### 1. 擋板按壓時間與角速度動態曲線 (Hold-duration Acceleration)
+- 在 `flipper` 結構中加入 `pressStartTime` 與 `currentSpeed`。
+- `setFlipper(side, true)` 時記錄按下時刻，初始速度由 `12 rad/s` 起步。
+- 在 `animate()` 物理步進中：
+  - 根據 `holdMs = now - f.pressStartTime` 動態計算角速度：
+    $$\text{currentSpeed} = 12.0 + \min(1.0, \frac{\text{holdMs}}{90\text{ms}}) \times 18.0 \quad (12 \to 30\text{ rad/s})$$
+  - 若在揮動過程中放開（`setFlipper(side, false)`），`targetAngle` 立即切回 `restAngle`，擋板能在中途提前回落，實現短按半行程輕挑球。
 
-#### 2. 💡 頂部 A-B-C 球道燈 (Top Rollover Lanes)
-- **位置與外觀**：位於頂部 Bumpers 上方（$Z = -5.0$），設有 3 條平行導軌通道（$X = -1.2, 0.0, 1.2$），地面嵌入 `[A] [B] [C]` 霓虹光圈標籤。
-- **滾過點亮**：球滾過未點亮的通道時，該道霓虹燈瞬間爆亮，獲得 **+150 分** 與高音鐘鳴。
-- **控燈換位 (Lane Change)**：按壓左/右擋板時，已點亮的球道燈會同步向左/向右循環輪轉，方便玩家控燈。
-- **全亮升級倍率 (Multiplier Upgrade)**：當 A-B-C 三燈全亮時，全場得分倍率永久/當局提升（×2 $\to$ ×3 $\to$ ×4），閃爍慶祝後重置為未點亮，可反覆挑戰！
+#### 2. 擊球物理力道動態縮放 (Dynamic Impulse & Variable Angle)
+- 在 `resolveFlipperBall_V2` 中引入 **揮擊角速度權重（Speed Ratio）** 與 **按壓蓄力比例（Hold Ratio）**：
+  - **基礎擊球速度（Kick Speed）**：
+    $$\text{kickSpeed} = (10.0 + \text{holdRatio} \times 8.0) + \text{tipFactor} \times (6.0 + \text{holdRatio} \times 8.0)$$
+  - **出球角度動態變化（Variable Ejection Angle）**：
+    - 短按時提高切線慣性保留比重（`tangentRatio: 0.55`），球沿著擋板斜向輕柔滑出。
+    - 長按時以強大的法線衝力強勢壓向正上方（`tangentRatio: 0.20`），球直衝上層球道。
 
-#### 3. 🔊 音效與觸覺支援
-- 新增落靶啪嗒聲（`playDropTargetHit`）與全靶彈起重置聲（`playBankReset`）。
-- 新增球道燈點亮音效與倍率升級勝利和弦。
+#### 3. 打擊音效與震動分級回饋
+- 擊球時依據 `holdRatio` 動態調節音效音高（380Hz $\to$ 740Hz）與微震強度（8ms $\to$ 24ms）。
 
 ---
 
 ## Verification Plan
 
 ### Manual Verification (在 Chrome / 手機測試)
-1. **落靶測試**：擊球撞擊左側 3 個黃色靶位，確認每擊中一個靶位即下沉入地面；3 靶全倒時確認彈出 +2,000 分橫幅並在 1 秒後自動升起重置。
-2. **頂部球道燈測試**：球穿過頂部 A/B/C 通道，確認對應字母點亮；按壓左右擋板測試 Lane Change 是否能左右切換燈號。
-3. **全道獎勵測試**：A-B-C 全亮時確認觸發倍率升級提示。
+1. **短按輕點測試**：極快速輕按 A 或 D（或手機螢幕兩側），觀察擋板動作是否更柔和，球被輕輕挑起、速度較慢、角度偏向側方。
+2. **長按蓄力測試**：按住 A 或 D 不放，觀察擋板全速暴衝至頂角，擊中球時是否發出高亢強擊聲，球猛烈向上噴射。

@@ -1124,7 +1124,10 @@ function createFlipper(side='left') {
     body, mesh, side, shapeOffset,
     restAngle, upAngle,
     angle: restAngle, targetAngle: restAngle,
-    angularSpeed: 24, // sweep speed (rad/s)
+    baseSpeed: 12,    // initial start speed (rad/s) for quick tap
+    maxSpeed: 30,     // full power speed (rad/s) for firm press
+    angularSpeed: 24, // current dynamic sweep speed
+    pressTime: 0,     // timestamp when flipper was engaged
     engaged: false,
     hingeVisualOffset: 0,
     bladeLen: length,          // physics blade length (for the predictive resolver)
@@ -1239,9 +1242,14 @@ function setFlipper(side, engaged) {
   f.engaged = !!engaged;
   f.targetAngle = engaged ? f.upAngle : f.restAngle;
   if (engaged && !wasEngaged) {
+    f.pressTime = performance.now();
+    f.angularSpeed = f.baseSpeed || 12;
     AudioFX.playFlipperClack(side);
     Haptic.flipper();
     shiftLaneLights(side === 'left' ? 'left' : 'right');
+  } else if (!engaged && wasEngaged) {
+    // Quick snappy release return
+    f.angularSpeed = 24;
   }
 }
 
@@ -1794,20 +1802,31 @@ function resolveFlipperBall_V2(f, b) {
       b.position.z = cz + nz * (reach + 0.04);
       b.position.y = bedY + ballR + 0.005;
 
-      // 2. Powerful kick impulse proportional to angular speed & hit radius
-      const speedMagnitude = Math.abs(angVel);
+      // 2. Progressive kick impulse proportional to hold duration, angular speed & hit radius
+      const holdMs = Math.max(0, performance.now() - (f.pressTime || 0));
+      const holdRatio = Math.min(1.0, holdMs / 85.0); // 0.0 (quick tap) ~ 1.0 (firm power press)
       const tipFactor = tClamped;
-      const kickSpeed = 16.0 + tipFactor * 10.0 + speedMagnitude * 0.15;
 
-      const tangentV = (b.velocity.x * dx + b.velocity.z * dz) * 0.35;
+      // Base kick speed: 10.0~18.0 depending on hold duration + up to 6.0~14.0 at the tip
+      const baseKick = 10.0 + holdRatio * 8.0;
+      const tipBonus = tipFactor * (6.0 + holdRatio * 8.0);
+      const kickSpeed = baseKick + tipBonus;
+
+      // Dynamic tangent preservation:
+      // Short tap preserves more lateral rolling momentum (feathering / soft pass)
+      // Long press forces ball predominantly upward along the normal (power launch)
+      const tangentCoeff = 0.55 - holdRatio * 0.35; // 0.55 -> 0.20
+      const tangentV = (b.velocity.x * dx + b.velocity.z * dz) * tangentCoeff;
+      
       b.velocity.x = nx * kickSpeed + dx * tangentV;
       b.velocity.z = nz * kickSpeed + dz * tangentV;
       b.velocity.y = 0;
 
-      // 3. Effects
-      spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, 16, 1.2);
-      playPing(480 + tipFactor * 260, 0.08);
-      Haptic.flipperHit();
+      // 3. Effects & Audio scaled to strike power
+      const sparkCount = Math.floor(10 + holdRatio * 16);
+      spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, sparkCount, 0.8 + holdRatio * 0.6);
+      playPing(380 + holdRatio * 280 + tipFactor * 160, 0.05 + holdRatio * 0.06);
+      Haptic.vibrate(Math.floor(10 + holdRatio * 16));
     }
   } else {
     // Static / Held Up / Resting Barrier: Rigid collision constraint with slight bounce
@@ -1925,6 +1944,16 @@ function animate(time) {
         if (f.shapeOffset) {
           const cur = f.angle;
           const target = f.targetAngle;
+
+          // Dynamic Angular Acceleration based on hold duration:
+          if (f.engaged) {
+            const holdMs = Math.max(0, performance.now() - (f.pressTime || 0));
+            const chargeRatio = Math.min(1.0, holdMs / 85.0); // ramp up from baseSpeed to maxSpeed in 85ms
+            f.angularSpeed = (f.baseSpeed || 12) + chargeRatio * ((f.maxSpeed || 30) - (f.baseSpeed || 12));
+          } else {
+            f.angularSpeed = 24; // snappy return
+          }
+
           const maxMove = f.angularSpeed * dt;
           const diff = target - cur;
           const newAngle = Math.abs(diff) <= maxMove ? target : cur + Math.sign(diff) * maxMove;
