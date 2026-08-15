@@ -177,6 +177,7 @@ function updateSparks(dt) {
 }
 
 const controls = new OrbitControls(camera, renderer.domElement);
+controls.enabled = false; // default disabled so touch/drag won't interfere with gameplay
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI / 2.1;
 
@@ -254,17 +255,199 @@ let maxComboThisGame = 0; // best combo reached in the current game (shown on ga
 const COMBO_WINDOW_MS = 2000;
 const COMBO_MAX = 10;
 
-// Audio (simple collision sound)
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+// =============================================================================
+// HAPTIC FEEDBACK ENGINE (MOBILE / TABLET)
+// =============================================================================
+const hapticToggle = document.getElementById('haptic-toggle');
+const Haptic = {
+  enabled: true,
+  init() {
+    try {
+      const saved = localStorage.getItem('PINBALL_HAPTIC');
+      if (saved !== null) {
+        this.enabled = saved === 'true';
+      }
+    } catch (e) {}
+    if (hapticToggle) {
+      hapticToggle.checked = this.enabled;
+      hapticToggle.addEventListener('change', (e) => {
+        this.enabled = !!e.target.checked;
+        try { localStorage.setItem('PINBALL_HAPTIC', String(this.enabled)); } catch (err) {}
+        if (this.enabled) this.flipper(); // test feedback pulse on enable
+      });
+    }
+  },
+  vibrate(pattern) {
+    if (!this.enabled) return;
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+        navigator.vibrate(pattern);
+      }
+    } catch (e) {}
+  },
+  flipper() { this.vibrate(12); },         // Solenoid click micro-pulse
+  flipperHit() { this.vibrate(22); },      // Solid flipper strike
+  bumper() { this.vibrate(28); },          // Pop bumper kick
+  kicker() { this.vibrate(24); },          // Corner kicker blast
+  saved() { this.vibrate([25, 40, 50]); }, // Ball Saved fanfare double-tap
+  drain() { this.vibrate([40, 50, 30]); }, // Ball lost rumble
+};
+Haptic.init();
+
+// =============================================================================
+// PROCEDURAL PINBALL SOUND SYSTEM (WEB AUDIO API - ZERO EXTERNAL ASSETS)
+// =============================================================================
+const AudioFX = {
+  ctx: null,
+  init() {
+    if (!this.ctx) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (AudioContextClass) this.ctx = new AudioContextClass();
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume().catch(() => {});
+    }
+  },
+
+  // 1. Flipper Solenoid Clack (mechanical snap)
+  playFlipperClack(side = 'left') {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // A. Low punch (solenoid coil)
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(side === 'left' ? 110 : 98, now);
+    osc.frequency.exponentialRampToValueAtTime(35, now + 0.035);
+    oscGain.gain.setValueAtTime(0.35, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    osc.connect(oscGain);
+    oscGain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.045);
+
+    // B. High metallic click snap (bandpass white noise burst)
+    const bufferSize = Math.floor(ctx.sampleRate * 0.02);
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+    const whiteNoise = ctx.createBufferSource();
+    whiteNoise.buffer = noiseBuffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(2900, now);
+    filter.Q.value = 3.0;
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.22, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.022);
+
+    whiteNoise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(ctx.destination);
+    whiteNoise.start(now);
+  },
+
+  // 2. Harmonic Bumper Chime (rich dual-tone arcade bell)
+  playBumperChime(baseFreq = 840, intensity = 1.0) {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const dur = 0.15;
+
+    // Root + Fifth harmonic
+    [baseFreq, baseFreq * 1.5].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = idx === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.98, now + dur);
+
+      const vol = (idx === 0 ? 0.22 : 0.12) * Math.min(1.4, 0.9 + intensity * 0.1);
+      gain.gain.setValueAtTime(0.001, now);
+      gain.gain.exponentialRampToValueAtTime(vol, now + 0.005);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + dur + 0.02);
+    });
+  },
+
+  // 3. Launch Whoosh / Jet
+  playLaunchJet() {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(720, now + 0.14);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(600, now);
+    filter.frequency.exponentialRampToValueAtTime(2200, now + 0.14);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.24, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.18);
+  },
+
+  // 4. Ball Saved Fanfare (cheerful arpeggio: C5 -> E5 -> G5)
+  playBallSavedFanfare() {
+    this.init();
+    if (!this.ctx) return;
+    const notes = [523.25, 659.25, 783.99]; // C5, E5, G5
+    notes.forEach((freq, i) => {
+      setTimeout(() => {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.16);
+      }, i * 65);
+    });
+  }
+};
+
+// Legacy ping helper for backward compatibility
 function playPing(freq = 440, duration = 0.08) {
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
+  AudioFX.init();
+  if (!AudioFX.ctx) return;
+  const ctx = AudioFX.ctx;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
   o.type = 'sine';
   o.frequency.value = freq;
   g.gain.value = 0.0001;
   o.connect(g);
-  g.connect(audioCtx.destination);
-  const now = audioCtx.currentTime;
+  g.connect(ctx.destination);
+  const now = ctx.currentTime;
   g.gain.cancelScheduledValues(now);
   g.gain.setValueAtTime(0.0001, now);
   g.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
@@ -704,8 +887,13 @@ function updateDebug(now) {
 function setFlipper(side, engaged) {
   const f = flippers.find(ff => ff.side === side);
   if (!f) return;
+  const wasEngaged = f.engaged;
   f.engaged = !!engaged;
   f.targetAngle = engaged ? f.upAngle : f.restAngle;
+  if (engaged && !wasEngaged) {
+    AudioFX.playFlipperClack(side);
+    Haptic.flipper();
+  }
 }
 
 // Controls: keyboard
@@ -797,11 +985,13 @@ if (spawnBtn) spawnBtn.addEventListener('click', ()=> spawnAtCenter());
 const clearBtn = document.getElementById('clear');
 if (clearBtn) clearBtn.addEventListener('click', ()=> clearBalls());
 const orbitToggle = document.getElementById('orbit');
-if (orbitToggle) orbitToggle.addEventListener('change', (e)=> { 
-  controls.enabled = orbitToggle.checked;
-  // do NOT change visualsTiltEnabled here — user asked to keep visual tilt disabled
-  if (!visualsTiltEnabled) tableGroup.rotation.set(0,0,0);
-});
+if (orbitToggle) {
+  orbitToggle.checked = false;
+  orbitToggle.addEventListener('change', (e)=> { 
+    controls.enabled = !!orbitToggle.checked;
+    if (!visualsTiltEnabled) tableGroup.rotation.set(0,0,0);
+  });
+}
 
 // Device orientation -> gravity
 function handleOrientation(event) {
@@ -1057,7 +1247,8 @@ function bumperScore(bp) {
   bp.flash = 1;
   showScorePopup(bp.body.position.x, bedY + 0.6, bp.body.position.z, gained);
   triggerScreenFlash(Math.min(0.2, 0.05 + gained / 3000));
-  playPing(560 + Math.random() * 300 + mult * 70, 0.09);
+  const baseFreq = bp.points >= 150 ? 920 : (bp.points >= 100 ? 780 : 660);
+  AudioFX.playBumperChime(baseFreq, mult);
   return mult;
 }
 // Handle a bumper hit: debounce, score (combo), and kick the ball away with a
@@ -1067,6 +1258,7 @@ function hitBumper(bp, ball) {
   ball._bumperHitAt = ball._bumperHitAt || {};
   if (now - (ball._bumperHitAt[bp.body.id] || 0) <= BUMPER_COOLDOWN_MS) return;
   ball._bumperHitAt[bp.body.id] = now;
+  Haptic.bumper();
   const mult = bumperScore(bp);
   const pop = BUMPER_POP + (mult - 1) * 3; // more combo -> stronger kick
   const dx = ball.position.x - bp.body.position.x;
@@ -1127,8 +1319,8 @@ function showBallSavedBanner() {
 }
 
 function triggerBallSavedEffect() {
-  playPing(750, 0.12);
-  setTimeout(() => playPing(980, 0.18), 90);
+  AudioFX.playBallSavedFanfare();
+  Haptic.saved();
   showBallSavedBanner();
   triggerScreenFlash(0.2);
   ballSaverUntil = 0; // consumed on this save
@@ -1142,7 +1334,8 @@ function triggerBallSavedEffect() {
       if (body) { body._kickerAt = {}; body._kickerAt[ki] = performance.now(); }
       K.flash = 1;
       spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 22, 1.3);
-      playPing(300 + Math.random() * 120, 0.1);
+      AudioFX.playLaunchJet();
+      Haptic.kicker();
     }
   }, 400);
 }
@@ -1156,6 +1349,7 @@ function onBallDrained() {
     return;
   }
 
+  Haptic.drain();
   ballsLeft = Math.max(0, ballsLeft - 1);
   updateBallsUI();
   playPing(150, 0.25); // low "ball lost" tone
@@ -1262,6 +1456,7 @@ function resolveFlipperBall_V2(f, b) {
       // 3. Effects
       spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, 16, 1.2);
       playPing(480 + tipFactor * 260, 0.08);
+      Haptic.flipperHit();
     }
   } else {
     // Static / Held Up / Resting Barrier: Rigid collision constraint with slight bounce
@@ -1484,7 +1679,8 @@ function animate(time) {
             updateScore(K.points);
             showScorePopup(K.x, bedY + 0.6, K.z, K.points);
             triggerScreenFlash(0.14);
-            playPing(320 + Math.random() * 160, 0.12);
+            AudioFX.playLaunchJet();
+            Haptic.kicker();
             K.flash = 1;
             spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 22, 1.3);
           }

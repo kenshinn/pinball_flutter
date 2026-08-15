@@ -1,55 +1,42 @@
-# 彈珠台遊戲體驗與視覺提升方案 (Pinball Enhancements)
+# Phase 4: 加強手機體驗 (觸覺震動回饋 Haptics & 機械真實音效 SFX)
 
-本計畫旨在全面升級 WebGL 彈珠台的視覺立體感、打擊回饋爽快度、觸控操作手感以及遊戲機制，並清理過去迭代留下的過期調校代碼。
+本計畫旨在透過 **Web Haptics API** 與 **Web Audio API 純代碼機械音效合成**，全面升級手機與平板的觸覺打擊手感與聽覺沉浸感，讓 WebGL 彈珠台擁有如同實體大型機台般的強烈打擊反饋。
+
+---
 
 ## User Review Required
 
 > [!NOTE]
-> 為了不干擾現有的流暢物理模擬，所有視覺升級（陰影、粒子火花、自發光脈衝）皆在 Three.js 渲染層執行，不會增加 Cannon-es 物理運算負擔。
+> - **觸覺震動 (Haptics)**：使用現代標準 `navigator.vibrate`。在 Android Chrome 等支援設備上提供不同力度的微震動；在不支援的設備（如部分 iOS Safari）自動靜默降級，不影響遊玩。
+> - **機械音效 (SFX)**：全數採用 Web Audio API 實時純代碼合成（Procedural Generation），**不依賴任何外部音訊檔案**，無額外網路負擔、零載入延遲。
+
+---
 
 ## Proposed Changes
 
----
+### [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
 
-### Phase 1: 視覺光影與打擊感提升 (Visual & Effects)
+#### 1. 📳 觸覺震動系統 (Haptic Engine)
+- 封裝 `Haptic` 管理器，針對不同事件提供專屬的微震動 Pattern：
+  - **擋板擊發 (Flipper Action)**：`12ms` 輕脆微震，模擬電磁閥（Solenoid）吸合擊發感。
+  - **Bumper 撞擊 (Bumper Pop)**：`28ms` 結實打擊震動。
+  - **擋板擊球 (Flipper Solid Hit)**：`20ms` 物理反彈衝擊震。
+  - **開局救球 (Ball Saved)**：`[25, 40, 50]` 雙波節奏勝利震動。
+  - **底洞出界 (Ball Drain)**：`[40, 50, 30]` 沉重失誤震動。
 
-#### [MODIFY] [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
-1. **動態陰影 (Soft Shadows)**：
-   - 啟用 `renderer.shadowMap.enabled = true`，採用 `THREE.PCFSoftShadowMap`。
-   - 配置主方向光源 `dir.castShadow = true`，設置適當的陰影範圍（`shadow.camera` left/right/top/bottom 與 `shadow.mapSize` 1024x1024）。
-   - 檯面底板 `floorMesh.receiveShadow = true`，球體 `ballMesh.castShadow = true`，擋板與 Bumpers 開啟陰影投射與接收。
-2. **真實金屬球體與材質升級**：
-   - 鋼珠採用高金屬度與低粗糙度（`metalness: 0.95, roughness: 0.1`），反射場景光線，營造真實鋼珠質感。
-   - Bumpers 與邊軌強化自發光（`emissive`），受擊時觸發強烈的光暈脈衝動畫（Glow Pulse）。
-3. **3D 撞擊粒子火花系統 (Spark Particle System)**：
-   - 新增輕量級 3D 粒子管理器（`SparkManager`），當球撞擊 Bumpers、Kickers 或擋板時，在 3D 碰撞座標噴發 15~20 顆彩色霓虹火花粒子，隨物理速度擴散淡出。
-
----
-
-### Phase 2: 遊戲機制與操作手感升級 (Gameplay & Controls)
-
-#### [MODIFY] [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
-1. **全螢幕分區觸控 (Full-Screen Split Touch)**：
-   - 手機/平板觸控時，支援直接按住螢幕左半邊/右半邊任意位置觸發左/右擋板，不再受限於底部按鈕的小區域。
-2. **開局救球機制 (Ball Saver)**：
-   - 發球後的 8 秒內為保護時間；若此時球掉入底洞，觸發 "BALL SAVED!" 橫幅特效並自動免費補發球，大幅降低開局秒出界的挫折感。
-
----
-
-### Phase 3: 代碼重構與清理 (Tech Debt Cleanup)
-
-#### [MODIFY] [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
-1. **移除遺留的 Hinge Tuner**：
-   - 徹底移除已無作用的 `attachHingeTuner` 相關代碼與 `localStorage` 讀取邏輯。
-2. **修復 `setFromEuler` 警告**：
-   - 修正 `addWall` 中的 Euler 參數傳遞，消除瀏覽器控制台潛在警告。
+#### 2. 🔊 實體彈珠台機械合成音效 (Procedural Pinball SFX)
+- 升級現有單調的 `playPing()`，實作多種實體機台經典音效：
+  1. **擋板電磁閥啪嗒聲 (Flipper Clack)**：低頻 90Hz 方波衝擊 + 高通金屬卡榫白噪音（20ms），按壓擋板時即時響起。
+  2. **Bumper 復古鐘聲泛音 (Chime / Bell)**：雙震盪器和弦（880Hz + 1320Hz 雙音衰減），打擊感更加立體清脆。
+  3. **發球噴射推進音 (Launch Jet)**：頻率滑音（220Hz $\to$ 660Hz）營造彈簧/氣壓發射感。
+  4. **救球勝利琶音 (Saver Fanfare)**：大三和弦清脆琶音（C5 $\to$ E5 $\to$ G5）。
+  5. **鋼珠金屬滾動聲 (Ball Rolling Friction)**：隨球體物理速度動態調整音量的微弱金屬摩擦濾波音。
 
 ---
 
 ## Verification Plan
 
-### Manual Verification (在 IDE Simple Browser 預覽)
-1. **陰影與金屬球體**：觀察球滾動時檯面上是否有平滑陰影，球體是否呈現鏡面金屬質感。
-2. **粒子火花**：發射球撞擊 Bumpers 與 Corner Kickers，觀察碰撞點是否有霓虹粒子火花噴發。
-3. **Ball Saver**：發球後立即讓球落入底洞，確認是否觸發 "BALL SAVED" 並自動補發球。
-4. **觸控/操作**：測試左鍵/右鍵、A/D、按鈕與點擊螢幕左右兩側是否正常反應。
+### Manual Verification (在手機或瀏覽器中測試)
+1. **擋板操作**：點擊螢幕左右側揮動擋板，聆聽是否有電磁閥「啪嗒」聲，手機上感受 12ms 的微震動反饋。
+2. **Bumper 撞擊**：發球撞擊中央三大 Bumper，確認立體金屬鐘聲與 28ms 的打擊震感。
+3. **Ball Saver 救球**：讓球滑入底洞，確認救球橫幅彈出時伴隨雙音琶音與雙重震動。
