@@ -432,6 +432,96 @@ const AudioFX = {
         osc.stop(now + 0.16);
       }, i * 65);
     });
+  },
+
+  // 5. Drop Target Drop Snap
+  playDropTargetHit() {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(260, now);
+    osc.frequency.exponentialRampToValueAtTime(60, now + 0.04);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.05);
+  },
+
+  // 6. Target Bank Reset (Solenoid Lift)
+  playBankReset() {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    [140, 220].forEach((freq, i) => {
+      setTimeout(() => {
+        if (!this.ctx) return;
+        const n = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(freq, n);
+        gain.gain.setValueAtTime(0.2, n);
+        gain.gain.exponentialRampToValueAtTime(0.001, n + 0.035);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(n);
+        osc.stop(n + 0.04);
+      }, i * 50);
+    });
+  },
+
+  // 7. Top Rollover Lane Ding
+  playRolloverDing(idx = 0) {
+    this.init();
+    if (!this.ctx) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const freqs = [1046.5, 1174.66, 1318.51]; // C6, D6, E6
+    const f = freqs[idx % freqs.length] || 1100;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(f, now);
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.exponentialRampToValueAtTime(0.25, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  },
+
+  // 8. Multiplier Upgrade Fanfare
+  playMultiplierUpFanfare() {
+    this.init();
+    if (!this.ctx) return;
+    const notes = [659.25, 783.99, 987.77, 1318.51]; // E5, G5, B5, E6
+    notes.forEach((freq, i) => {
+      setTimeout(() => {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now);
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.exponentialRampToValueAtTime(0.28, now + 0.008);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.18);
+      }, i * 60);
+    });
   }
 };
 
@@ -624,6 +714,264 @@ function kickerLaunchVelocity(K) {
   const rx = bx * cs - bz * sn, rz = bx * sn + bz * cs;
   const pop = KICKER_POP * (0.85 + Math.random() * 0.3); // slight random power
   return { x: rx * pop, y: 0, z: rz * pop };
+}
+
+// =============================================================================
+// PHASE 5: 3-BANK DROP TARGETS (LEFT PLAYFIELD)
+// =============================================================================
+const dropTargets = [];
+const DROP_TARGET_W = 0.22;
+const DROP_TARGET_H = 0.75;
+const DROP_TARGET_L = 0.65;
+const DROP_TARGET_CONFIGS = [
+  { x: -3.15, z: -0.75, id: 0, color: 0xffbe0b, points: 250 },
+  { x: -3.15, z:  0.05, id: 1, color: 0xffbe0b, points: 250 },
+  { x: -3.15, z:  0.85, id: 2, color: 0xffbe0b, points: 250 },
+];
+
+function createDropTargetBank() {
+  const upY = bedY + DROP_TARGET_H / 2;
+  const downY = bedY - DROP_TARGET_H / 2 - 0.05;
+
+  for (const cfg of DROP_TARGET_CONFIGS) {
+    const geo = new THREE.BoxGeometry(DROP_TARGET_W, DROP_TARGET_H, DROP_TARGET_L);
+    const mat = new THREE.MeshStandardMaterial({
+      color: cfg.color,
+      emissive: 0xff8800,
+      emissiveIntensity: 0.45,
+      metalness: 0.35,
+      roughness: 0.3,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cfg.x, upY, cfg.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    tableGroup.add(mesh);
+
+    // Physics body
+    const shape = new CANNON.Box(new CANNON.Vec3(DROP_TARGET_W/2, DROP_TARGET_H/2, DROP_TARGET_L/2));
+    const body = new CANNON.Body({ mass: 0 });
+    body.addShape(shape);
+    body.position.set(cfg.x, upY, cfg.z);
+    body.material = bumperMaterial;
+    world.addBody(body);
+
+    const dt = {
+      cfg, mesh, mat, body,
+      upY, downY,
+      isDown: false,
+      animY: upY,
+      flash: 0,
+    };
+
+    body.addEventListener('collide', (e) => {
+      if (e.body && e.body._isBall) hitDropTarget(dt, e.body);
+    });
+
+    dropTargets.push(dt);
+    registerTableObject(body, mesh);
+  }
+}
+createDropTargetBank();
+
+function hitDropTarget(dt, ball) {
+  if (dt.isDown) return;
+  dt.isDown = true;
+  dt.flash = 1;
+  
+  // Disable physics body so ball glides past
+  dt.body.collisionResponse = false;
+  dt.body.position.y = dt.downY;
+
+  // SFX & Haptics
+  AudioFX.playDropTargetHit();
+  Haptic.vibrate(24);
+
+  // Score & FX
+  updateScore(dt.cfg.points);
+  showScorePopup(dt.cfg.x, bedY + 0.6, dt.cfg.z, dt.cfg.points);
+  triggerScreenFlash(0.12);
+  spawnSparks(dt.cfg.x, bedY + 0.4, dt.cfg.z, 0xffbe0b, 16, 1.1);
+
+  // Check if bank cleared!
+  if (dropTargets.every(t => t.isDown)) {
+    setTimeout(() => {
+      onDropTargetBankCleared();
+    }, 150);
+  }
+}
+
+function onDropTargetBankCleared() {
+  const bonus = 2000;
+  updateScore(bonus);
+  showScorePopup(-3.15, bedY + 1.0, 0.05, `🎯 TARGETS CLEARED! +${bonus}`);
+  triggerScreenFlash(0.25);
+  Haptic.saved();
+  AudioFX.playMultiplierUpFanfare();
+
+  // Reset bank after 1.2s
+  setTimeout(() => {
+    resetDropTargetBank();
+  }, 1200);
+}
+
+function resetDropTargetBank() {
+  AudioFX.playBankReset();
+  Haptic.vibrate(18);
+  for (const dt of dropTargets) {
+    dt.isDown = false;
+    dt.body.collisionResponse = true;
+    dt.body.position.y = dt.upY;
+    dt.flash = 0.8;
+  }
+}
+
+// =============================================================================
+// PHASE 5: TOP ROLLOVER LANES (A - B - C) & LANE CHANGE
+// =============================================================================
+let bonusMultiplier = 1; // Playfield Bonus Multiplier (1x -> 2x -> 3x -> 4x -> 5x)
+const bonusMultiplierEl = document.createElement('div');
+bonusMultiplierEl.id = 'bonus-multiplier-badge';
+bonusMultiplierEl.style.display = 'none';
+bonusMultiplierEl.innerHTML = '⭐ BONUS <span id="multiplier-val">×1</span>';
+Object.assign(bonusMultiplierEl.style, {
+  padding: '4px 10px',
+  borderRadius: '20px',
+  fontSize: '12px',
+  fontWeight: '800',
+  color: '#ffbe0b',
+  background: 'rgba(255,190,11,0.12)',
+  border: '1px solid rgba(255,190,11,0.4)',
+  boxShadow: '0 0 12px rgba(255,190,11,0.25)'
+});
+const uiEl = document.getElementById('ui');
+if (uiEl) uiEl.insertBefore(bonusMultiplierEl, document.getElementById('controls-row'));
+
+function updateBonusMultiplierUI() {
+  if (!bonusMultiplierEl) return;
+  if (bonusMultiplier > 1 && !gameOver) {
+    bonusMultiplierEl.style.display = 'inline-flex';
+    const valEl = document.getElementById('multiplier-val');
+    if (valEl) valEl.textContent = `×${bonusMultiplier}`;
+  } else {
+    bonusMultiplierEl.style.display = 'none';
+  }
+}
+
+const rolloverLanes = [
+  { label: 'A', x: -1.2, z: -4.95, lit: false, flash: 0, mesh: null, mat: null },
+  { label: 'B', x:  0.0, z: -4.95, lit: false, flash: 0, mesh: null, mat: null },
+  { label: 'C', x:  1.2, z: -4.95, lit: false, flash: 0, mesh: null, mat: null },
+];
+
+function createTopRolloverLanes() {
+  const laneY = bedY + 0.02;
+
+  // 1. Lane divider walls (metal guides between A/B and B/C)
+  const dividerH = 0.9;
+  const dividerL = 1.6;
+  const dividerThick = 0.16;
+  const dividerY = bedY + dividerH / 2;
+  [-0.6, 0.6].forEach(divX => {
+    addWall(
+      { x: divX, y: dividerY, z: -4.95 },
+      { x: 0, y: 0, z: 0 },
+      { x: dividerThick, y: dividerH, z: dividerL },
+      { color: 0x556677, metalness: 0.8, roughness: 0.25, emissive: 0x112233, emissiveIntensity: 0.3 }
+    );
+  });
+
+  // 2. Rollover Indicator Pads (Ground Neon Rings)
+  rolloverLanes.forEach((lane) => {
+    const padGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.04, 24);
+    const padMat = new THREE.MeshStandardMaterial({
+      color: 0x004455,
+      emissive: 0x003344,
+      emissiveIntensity: 0.2, // dim when unlit
+      metalness: 0.4,
+      roughness: 0.3,
+    });
+    const padMesh = new THREE.Mesh(padGeo, padMat);
+    padMesh.position.set(lane.x, laneY, lane.z);
+    padMesh.receiveShadow = true;
+    tableGroup.add(padMesh);
+    lane.mesh = padMesh;
+    lane.mat = padMat;
+  });
+}
+createTopRolloverLanes();
+
+// Lane Change: shift lit lights when flipper engaged
+function shiftLaneLights(direction = 'right') {
+  if (rolloverLanes.length < 2) return;
+  if (direction === 'right') {
+    const last = rolloverLanes[rolloverLanes.length - 1].lit;
+    for (let i = rolloverLanes.length - 1; i > 0; i--) {
+      rolloverLanes[i].lit = rolloverLanes[i - 1].lit;
+    }
+    rolloverLanes[0].lit = last;
+  } else {
+    const first = rolloverLanes[0].lit;
+    for (let i = 0; i < rolloverLanes.length - 1; i++) {
+      rolloverLanes[i].lit = rolloverLanes[i + 1].lit;
+    }
+    rolloverLanes[rolloverLanes.length - 1].lit = first;
+  }
+}
+
+function checkRolloverLanes(ball) {
+  if (!ball) return;
+  const bz = ball.position.z;
+  const bx = ball.position.x;
+  if (bz > -5.7 && bz < -4.2) {
+    rolloverLanes.forEach((lane, idx) => {
+      if (Math.abs(bx - lane.x) < 0.42) {
+        ball._laneHitAt = ball._laneHitAt || {};
+        const now = performance.now();
+        if (now - (ball._laneHitAt[idx] || 0) > 600) {
+          ball._laneHitAt[idx] = now;
+          triggerRolloverLane(lane, idx);
+        }
+      }
+    });
+  }
+}
+
+function triggerRolloverLane(lane, idx) {
+  lane.lit = true;
+  lane.flash = 1;
+  const pts = 150 * bonusMultiplier;
+  updateScore(pts);
+  showScorePopup(lane.x, bedY + 0.6, lane.z, `[${lane.label}] +${pts}`);
+  AudioFX.playRolloverDing(idx);
+  Haptic.vibrate(16);
+  spawnSparks(lane.x, bedY + 0.2, lane.z, 0x00f5d4, 12, 0.9);
+
+  // Check if all A-B-C lanes are completed!
+  if (rolloverLanes.every(l => l.lit)) {
+    setTimeout(() => {
+      onRolloverLanesCompleted();
+    }, 120);
+  }
+}
+
+function onRolloverLanesCompleted() {
+  bonusMultiplier = Math.min(5, bonusMultiplier + 1);
+  updateBonusMultiplierUI();
+  const bonusPts = 1000 * bonusMultiplier;
+  updateScore(bonusPts);
+  showScorePopup(0, bedY + 0.8, -4.95, `⭐ MULTIPLIER UP! ×${bonusMultiplier} (+${bonusPts})`);
+  triggerScreenFlash(0.2);
+  Haptic.saved();
+  AudioFX.playMultiplierUpFanfare();
+
+  // Flash lanes and reset
+  setTimeout(() => {
+    rolloverLanes.forEach(l => {
+      l.lit = false;
+      l.flash = 0.5;
+    });
+  }, 1000);
 }
 
 // Ball spawn (High metalness chrome ball with soft highlights)
@@ -893,6 +1241,7 @@ function setFlipper(side, engaged) {
   if (engaged && !wasEngaged) {
     AudioFX.playFlipperClack(side);
     Haptic.flipper();
+    shiftLaneLights(side === 'left' ? 'left' : 'right');
   }
 }
 
@@ -1376,8 +1725,10 @@ function newGame() {
   maxComboThisGame = 0;
   ballSaverUntil = 0;
   updateBallSaverUI(performance.now());
-  updateComboUI(1);
-  updateBallsUI();
+  bonusMultiplier = 1;
+  updateBonusMultiplierUI();
+  resetDropTargetBank();
+  rolloverLanes.forEach(l => { l.lit = false; l.flash = 0; });
   gameOverEl.style.display = 'none';
 }
 
@@ -1686,6 +2037,9 @@ function animate(time) {
           }
         }
       }
+      // Check Top Rollover Lanes (A - B - C)
+      checkRolloverLanes(b);
+
       // Predictive flipper resolver: keep the ball on the playfield side of each
       // blade and kick it when the flipper is raised (robust vs fast-swing tunneling).
       for (const f of flippers) resolveFlipperBall(f, b);
@@ -1695,6 +2049,28 @@ function animate(time) {
 
     // update 3D spark particles
     updateSparks(dt);
+
+    // update Drop Targets smooth drop/rise animation
+    for (const dtItem of dropTargets) {
+      const targetY = dtItem.isDown ? dtItem.downY : dtItem.upY;
+      dtItem.animY += (targetY - dtItem.animY) * Math.min(1, dt * 18);
+      dtItem.mesh.position.y = dtItem.animY;
+      if (dtItem.flash > 0) {
+        dtItem.flash = Math.max(0, dtItem.flash - dt * 4);
+        if (dtItem.mat) dtItem.mat.emissiveIntensity = 0.45 + dtItem.flash * 2.5;
+      }
+    }
+
+    // update Top Rollover Lanes glow
+    for (const l of rolloverLanes) {
+      if (l.flash > 0) l.flash = Math.max(0, l.flash - dt * 3);
+      if (l.mat) {
+        const baseIntensity = l.lit ? 1.6 : 0.2;
+        l.mat.emissiveIntensity = baseIntensity + l.flash * 2.2;
+        l.mat.color.setHex(l.lit ? 0x00f5d4 : 0x004455);
+        l.mat.emissive.setHex(l.lit ? 0x00f5d4 : 0x003344);
+      }
+    }
 
     // decay bumper hit pulse (visual feedback: emissive flash + radius pulse)
     for (const bp of bumpers) {

@@ -1,36 +1,31 @@
-# Phase 4: 手機體驗升級 成果報告 (Haptics, Procedural SFX & Controls)
+# Phase 5: 可擊倒靶位與頂部球道燈 成果報告 (Drop Targets & Rollover Lanes)
 
-我們已成功實作並完成了 **Phase 4: 加強手機體驗（觸覺震動回饋 Haptics、機械真實音效 SFX 與控制最佳化）**！
+我們已成功實作並完成了 **Phase 5: 3 連可擊倒落靶 (Drop Targets) 與頂部 A-B-C 球道燈 (Rollover Lanes with Lane Change)**！
 
 ---
 
 ## 🎮 實作功能詳情
 
-### 1. 📳 觸覺震動系統 (Web Haptics Engine)
-針對手機與平板設備，以精準的震動毫秒數與節奏模擬實體機台反饋：
-- **擋板擊發 (Flipper Clack)**：`12ms` 輕脆微震，完美重現電磁閥（Solenoid）吸合擊發感。
-- **Bumper 撞擊 (Bumper Pop)**：`28ms` 結實打擊震感。
-- **擋板強擊球 (Flipper Solid Hit)**：`22ms` 反彈衝擊震。
-- **Corner Kicker 發射 (Kicker Launch)**：`24ms` 彈射微震。
-- **開局救球 (Ball Saved)**：`[25, 40, 50]` 雙波節奏勝利震動。
-- **底洞出界 (Ball Drain)**：`[40, 50, 30]` 沉重失誤震動。
-- **頂部控制列 `📳 Vibrate` 開關**：預設為開啟（Checked），支援 `localStorage` 偏好記憶。
+### 1. 🎯 左側 3 連可擊倒落靶 (3-Bank Drop Targets)
+- **立體幾何與物理**：左側軌道旁整齊排列 3 個亮黃霓虹立體靶位（$X = -3.15$）。
+- **擊中下沉**：球撞擊單靶時發出機械擊倒聲「啪！」，靶位平滑沉入地下（停用物理碰撞），獎勵 **+250 分**、漂浮文字與火花粒子。
+- **全靶擊倒大獎 (Bank Cleared)**：3 靶全倒時觸發 **`🎯 TARGETS CLEARED! +2,000`** 大獎與勝利和弦，1.2 秒後 3 靶伴隨電磁閥重置聲「啪！」地全體升回地面！
 
 ---
 
-### 2. 🔊 實體彈珠台機械合成音效 (Procedural Pinball SFX)
-全數採用 Web Audio API 純代碼實時合成，**零外包音訊檔案依賴、零載入延遲**：
-1. **擋板電磁閥啪嗒聲 (Flipper Clack)**：低頻 98~110Hz 方波衝擊 + 2.9kHz 高通白噪音金屬卡榫（20ms），按壓擋板瞬間即時響起。
-2. **Bumper 復古金屬鐘聲和弦 (Harmonic Chimes)**：雙震盪器和弦（880Hz 根音 + 1320Hz 五度音階），打擊感更加立體動聽。
-3. **發球與 Kicker 噴射音 (Launch Jet)**：200Hz $\to$ 720Hz 頻率滑音，營造氣壓/彈簧噴射推力感。
-4. **救球大三和弦琶音 (Saver Fanfare)**：明亮清脆的 C5 $\to$ E5 $\to$ G5 勝利琶音。
+### 2. 💡 頂部 A-B-C 球道燈 (Top Rollover Lanes)
+- **3 條導軌通道**：頂部 Bumpers 上方設有 3 條平行導軌（$X = -1.2, 0.0, 1.2$），地面嵌入霓虹燈環。
+- **滾過點亮**：球滾過時點亮該道霓虹燈，獎勵 **+150 分** 與高音清亮叮咚。
+- **經典神技 Lane Change**：按壓左/右擋板時，已點亮的燈位會同步向左/向右循環輪轉，讓玩家能主動控燈接球！
+- **全亮倍率升級**：A-B-C 三燈全點亮時，全場獎勵倍率提升（×2 $\to$ ×3 $\to$ ×4 $\to$ ×5），頂部 HUD 顯示 `⭐ BONUS ×N`，全場得分倍增！
 
 ---
 
-### 3. 🎯 操控最佳化 (Touch Controls & Orbit)
-- **Orbit 視角控制預設關閉**：避免手機觸控或桌面拖曳時誤觸旋轉 3D 鏡頭，維持最佳穩定俯視角度。
+## 📸 實機畫面
+
+!["Phase 5 球台機關全景"](file:///Users/kenshinn_huang/.gemini/antigravity-ide/brain/d9f9f575-ca0e-4584-9f36-d9bd828eb13f/phase5_layout.png)
 
 ---
 
-## 🔄 驗證與線上網址
-- **線上體驗網址**：https://kenshinn.github.io/pinball_flutter/
+## 🔄 驗證指南
+- **本機 / 手機測試**：在瀏覽器中按 `Cmd + Shift + R` 刷新，發球撞擊左側 3 個黃色靶位，體驗擊倒下沉與全倒重置；球穿過頂部通道時點亮球道燈，揮動擋板體驗 Lane Change 控燈樂趣！

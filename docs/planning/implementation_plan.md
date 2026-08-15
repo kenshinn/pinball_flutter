@@ -1,14 +1,14 @@
-# Phase 4: 加強手機體驗 (觸覺震動回饋 Haptics & 機械真實音效 SFX)
+# Phase 5: 可擊倒靶位與頂部球道燈 (Drop Targets & Rollover Lanes)
 
-本計畫旨在透過 **Web Haptics API** 與 **Web Audio API 純代碼機械音效合成**，全面升級手機與平板的觸覺打擊手感與聽覺沉浸感，讓 WebGL 彈珠台擁有如同實體大型機台般的強烈打擊反饋。
+本計畫旨在引進實體大型彈珠台最具可玩性與策略深度的兩大經典機關：**左側 3 連可擊倒落靶 (3-Bank Drop Targets)** 與 **頂部 A-B-C 球道燈 (Top Rollover Lanes with Lane Change)**，為玩家提供明確的打靶目標與倍率累積成就感。
 
 ---
 
 ## User Review Required
 
 > [!NOTE]
-> - **觸覺震動 (Haptics)**：使用現代標準 `navigator.vibrate`。在 Android Chrome 等支援設備上提供不同力度的微震動；在不支援的設備（如部分 iOS Safari）自動靜默降級，不影響遊玩。
-> - **機械音效 (SFX)**：全數採用 Web Audio API 實時純代碼合成（Procedural Generation），**不依賴任何外部音訊檔案**，無額外網路負擔、零載入延遲。
+> - **無縫整合現有物理與渲染**：所有落靶下沉動畫、球道感應與光影粒子皆在 Three.js + Cannon-es 既有架構下高效率執行，零外部模型載入延遲。
+> - **支援彈珠台經典神技「Lane Change」**：揮動左/右擋板時，頂部已點亮的燈位會即時左右輪轉切換，讓玩家可主動控燈接球！
 
 ---
 
@@ -16,27 +16,27 @@
 
 ### [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
 
-#### 1. 📳 觸覺震動系統 (Haptic Engine)
-- 封裝 `Haptic` 管理器，針對不同事件提供專屬的微震動 Pattern：
-  - **擋板擊發 (Flipper Action)**：`12ms` 輕脆微震，模擬電磁閥（Solenoid）吸合擊發感。
-  - **Bumper 撞擊 (Bumper Pop)**：`28ms` 結實打擊震動。
-  - **擋板擊球 (Flipper Solid Hit)**：`20ms` 物理反彈衝擊震。
-  - **開局救球 (Ball Saved)**：`[25, 40, 50]` 雙波節奏勝利震動。
-  - **底洞出界 (Ball Drain)**：`[40, 50, 30]` 沉重失誤震動。
+#### 1. 🎯 左側 3 連可擊倒落靶 (3-Bank Drop Targets)
+- **位置與外觀**：位於左側中段（$X = -3.1, Z \in [-0.6, 0.2, 1.0]$），3 個亮黃霓虹立體靶位。
+- **打擊機制**：
+  - 球撞擊單靶時：靶位「啪！」地快速沉入地面下（下沉動畫），物理阻擋暫時停用，獎勵 **+250 分**、火花粒子與機械擊倒音效。
+  - **全靶擊倒 (Bank Cleared)**：3 靶全倒時觸發 **`🎯 TARGETS CLEARED! +2,000`** 特效與雙重震感，1 秒後全體自動彈回地面重置！
 
-#### 2. 🔊 實體彈珠台機械合成音效 (Procedural Pinball SFX)
-- 升級現有單調的 `playPing()`，實作多種實體機台經典音效：
-  1. **擋板電磁閥啪嗒聲 (Flipper Clack)**：低頻 90Hz 方波衝擊 + 高通金屬卡榫白噪音（20ms），按壓擋板時即時響起。
-  2. **Bumper 復古鐘聲泛音 (Chime / Bell)**：雙震盪器和弦（880Hz + 1320Hz 雙音衰減），打擊感更加立體清脆。
-  3. **發球噴射推進音 (Launch Jet)**：頻率滑音（220Hz $\to$ 660Hz）營造彈簧/氣壓發射感。
-  4. **救球勝利琶音 (Saver Fanfare)**：大三和弦清脆琶音（C5 $\to$ E5 $\to$ G5）。
-  5. **鋼珠金屬滾動聲 (Ball Rolling Friction)**：隨球體物理速度動態調整音量的微弱金屬摩擦濾波音。
+#### 2. 💡 頂部 A-B-C 球道燈 (Top Rollover Lanes)
+- **位置與外觀**：位於頂部 Bumpers 上方（$Z = -5.0$），設有 3 條平行導軌通道（$X = -1.2, 0.0, 1.2$），地面嵌入 `[A] [B] [C]` 霓虹光圈標籤。
+- **滾過點亮**：球滾過未點亮的通道時，該道霓虹燈瞬間爆亮，獲得 **+150 分** 與高音鐘鳴。
+- **控燈換位 (Lane Change)**：按壓左/右擋板時，已點亮的球道燈會同步向左/向右循環輪轉，方便玩家控燈。
+- **全亮升級倍率 (Multiplier Upgrade)**：當 A-B-C 三燈全亮時，全場得分倍率永久/當局提升（×2 $\to$ ×3 $\to$ ×4），閃爍慶祝後重置為未點亮，可反覆挑戰！
+
+#### 3. 🔊 音效與觸覺支援
+- 新增落靶啪嗒聲（`playDropTargetHit`）與全靶彈起重置聲（`playBankReset`）。
+- 新增球道燈點亮音效與倍率升級勝利和弦。
 
 ---
 
 ## Verification Plan
 
-### Manual Verification (在手機或瀏覽器中測試)
-1. **擋板操作**：點擊螢幕左右側揮動擋板，聆聽是否有電磁閥「啪嗒」聲，手機上感受 12ms 的微震動反饋。
-2. **Bumper 撞擊**：發球撞擊中央三大 Bumper，確認立體金屬鐘聲與 28ms 的打擊震感。
-3. **Ball Saver 救球**：讓球滑入底洞，確認救球橫幅彈出時伴隨雙音琶音與雙重震動。
+### Manual Verification (在 Chrome / 手機測試)
+1. **落靶測試**：擊球撞擊左側 3 個黃色靶位，確認每擊中一個靶位即下沉入地面；3 靶全倒時確認彈出 +2,000 分橫幅並在 1 秒後自動升起重置。
+2. **頂部球道燈測試**：球穿過頂部 A/B/C 通道，確認對應字母點亮；按壓左右擋板測試 Lane Change 是否能左右切換燈號。
+3. **全道獎勵測試**：A-B-C 全亮時確認觸發倍率升級提示。
