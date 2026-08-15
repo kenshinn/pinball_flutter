@@ -1,32 +1,34 @@
-# 擋板防穿模方案對照與回退指南 (Flipper Anti-Tunneling Solutions)
+# Phase 2: 遊戲機制與操作手感升級 成果報告 (Gameplay & Controls)
 
-已為您完整註記並保留 **Solution V1** 與 **Solution V2**，隨時可在代碼中一鍵無縫切換或回退！
-
----
-
-## 📊 方案對照與原理
-
-| 特性 | Solution V2 (當前預設 `v2_capsule_swept`) | Solution V1 (舊版備份 `v1_discrete_kinematic`) |
-| :--- | :--- | :--- |
-| **碰撞原理** | **點到線段膠囊體解析投影 + 全深度掃掠** (Point-to-Segment Capsule Analytical Swept) | **離散 Kinematic Box 碰撞 + 簡單法向推力** (Discrete Box & Normal Offset) |
-| **Cannon 剛體排斥** | `body.collisionResponse = false` (防止薄 Box 穿透時反向往下排斥) | `body.collisionResponse = true` (使用 Cannon-es 預設剛體排斥) |
-| **揮擊動態捕獲** | 依據角速度與旋轉半徑賦予 $16 \sim 26$ 的徑向爆炸發射力 + 3D 火花 | 依據固定目標速度增加法向推力 |
-| **靜止/按住狀態** | 作為剛體實體牆 (Rigid Constraint)，提供 0.25 彈性反彈與滑動 | 依賴 Cannon 剛體 contact material |
+我們已成功實作並完成了 **Phase 2** 的核心機制升級與物理極致優化！
 
 ---
 
-## 🔄 如何切換或回退到舊版 (Rollback Guide)
+## 🎮 實作功能詳情
 
-若您想隨時換回舊版 **Solution V1**：
-1. 開啟 [`three_app/js/main.js`](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
-2. 找到最頂端的開關變數：
-   ```javascript
-   // 改為 'v1_discrete_kinematic'
-   const FLIPPER_SOLVER_VERSION = 'v1_discrete_kinematic';
-   ```
-3. 在 `createFlipper()` 內將 `body.collisionResponse = false;` 改為 `body.collisionResponse = true;` 即可完全恢復舊版物理行為！
+### 1. 全螢幕分區多點觸控 (Full-Screen Split Multi-Touch)
+- **手感全面升級**：在手機或平板上，不再需要精準對準底部小按鈕，只要拇指/手指點擊或按住螢幕**左半側**即可驅動左擋板，點擊/按住**右半側**即可驅動右擋板。
+- **多點觸控支援**：左右兩手可同時按下維持雙擋板抬起，放開任一手時對應擋板即時落下。
+- **智慧區域排除**：自動避開頂部的設定與分數區域，點擊底部按鈕或使用鍵盤（◀ / ▶、A / D）依然同步支援。
+- **無球即發**：當場上沒有球時，點擊螢幕任何區域即可快速發射新球。
 
 ---
 
-## 🔍 當前狀態
-目前專案預設使用 **Solution V2**，並在代碼與 `DEVELOPMENT.md` 中完整保留了 V1 的實作邏輯與切換說明。
+### 2. 開局救球機制 (Ball Saver System - 5s)
+- **5 秒開局保護**：發球後的 5 秒內為保護時間，頂部 HUD 會即時顯示青色霓虹標籤 `🛡️ SAVER (5s)`（倒數 4s、3s、2s、1s），最後 2 秒進入呼吸燈閃爍提醒。
+- **防挫折出界救回**：若球在 5 秒內意外滑入底洞（Drain）：
+  - 觸發炫麗的 **`🛡️ BALL SAVED!`** 彈出橫幅動畫（`z-index: 999999`）與清脆勝利雙音效。
+  - **不扣減剩餘球數**，保留當前 Combo！
+  - 延遲 400ms 後自動免費重新發射新球回到戰場。
+- **全發球途徑保護**：無論是點擊畫面發球、按鈕發球、按空白鍵或系統自動補發，新球誕生 100% 立即獲得保護！
+
+---
+
+### 3. Flipper 擋板幾何與膠囊體尖端導流物理 (Capsule Endcap Resolver)
+- **加長檔板手感（長度 2.32）**：提供充裕的擊球覆蓋面與控球手感。
+- **尖端圓弧物理導流**：升級為徑向圓弧推力解析（Capsule Endcap Radial Push），徹底消除舊版尖端空氣牆，確保鋼珠能自然、絲滑地穿過底洞掉落，絕不卡球！
+
+---
+
+## 🔄 驗證與線上網址
+- **線上體驗網址**：https://kenshinn.github.io/pinball_flutter/

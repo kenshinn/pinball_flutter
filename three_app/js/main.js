@@ -493,6 +493,11 @@ function spawnBall(pos, vel) {
   meshes.push(mesh);
 
   ballCount++;
+
+  // Activate Ball Saver protection for all newly entered balls
+  ballSaverUntil = performance.now() + BALL_SAVER_DURATION;
+  updateBallSaverUI(performance.now());
+
   return body;
 }
 
@@ -520,6 +525,9 @@ function spawnAtCenter() {
   K.flash = 1;
   spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 20, 1.2);
   playPing(300 + Math.random() * 120, 0.1);
+
+  // Activate Ball Saver protection window
+  ballSaverUntil = performance.now() + BALL_SAVER_DURATION;
 }
 
 // Raycaster for pointer spawn onto floorMesh (prefer object intersection to plane)
@@ -530,13 +538,13 @@ const mouse = new THREE.Vector2();
 const flippers = [];
 function createFlipper(side='left') {
   const isLeft = side === 'left';
-  // flipper blade geometry: length (along local X), height (vertical Y), thickness (Z)
-  const length = 2.4;
+  // flipper blade geometry: lengthened for richer control & wider coverage
+  const length = 2.32;
   const thickness = 0.45;
   const height = 0.9; // tall enough to cover the whole ball so hits push it sideways, not up
 
   // pivot sits near the bottom side edge; the blade extends toward the table centre
-  const pivotX = isLeft ? -2.6 : 2.6;
+  const pivotX = isLeft ? -2.65 : 2.65;
   const pivotZ = tableSize.h/2 - 0.9;
   const pivotY = bedY + height/2; // blade bottom rests flush on the bed surface
 
@@ -572,9 +580,9 @@ function createFlipper(side='left') {
   body.material = bumperMaterial;
   world.addBody(body);
 
-  // Rest / engaged angles around the Y axis (radians); the pair forms a V at rest.
-  const restAngle = isLeft ? -0.5 : 0.5;
-  const upAngle   = isLeft ?  0.5 : -0.5;
+  // Rest / engaged angles around the Y axis (radians)
+  const restAngle = isLeft ? -0.58 : 0.58;
+  const upAngle   = isLeft ?  0.52 : -0.52;
 
   // apply the rest orientation immediately (body + visual)
   const q0 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), restAngle);
@@ -689,8 +697,8 @@ function updateDebug(now) {
     const angleY = Math.atan2(-dz, dx); // align the box's local X axis with (dx, dz)
     addWall({ x: cx, y, z: cz }, { x: 0, y: angleY, z: 0 }, { x: len, y: funnelHeight, z: funnelThickness }, { color: 0x445566 });
   }
-  addAngledWall( railInner, 2.3,  2.6, 5.2); // right funnel -> right flipper pivot
-  addAngledWall(-railInner, 2.3, -2.6, 5.2); // left funnel  -> left flipper pivot
+  addAngledWall( railInner, 2.3,  2.65, 5.2); // right funnel -> right flipper pivot
+  addAngledWall(-railInner, 2.3, -2.65, 5.2); // left funnel  -> left flipper pivot
 })();
 
 function setFlipper(side, engaged) {
@@ -700,7 +708,7 @@ function setFlipper(side, engaged) {
   f.targetAngle = engaged ? f.upAngle : f.restAngle;
 }
 
-// Controls: keyboard and touch UI
+// Controls: keyboard
 window.addEventListener('keydown', (e)=>{
   if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') setFlipper('left', true);
   if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') setFlipper('right', true);
@@ -711,37 +719,75 @@ window.addEventListener('keyup', (e)=>{
   if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') setFlipper('right', false);
 });
 
-// Touch buttons
+// Dedicated Touch Buttons (Bottom UI)
 const leftBtn = document.getElementById('left-flip');
 const rightBtn = document.getElementById('right-flip');
 if (leftBtn) {
-  leftBtn.addEventListener('pointerdown', ()=> setFlipper('left', true));
-  leftBtn.addEventListener('pointerup', ()=> setFlipper('left', false));
-  leftBtn.addEventListener('pointercancel', ()=> setFlipper('left', false));
+  leftBtn.addEventListener('pointerdown', (e)=> { e.stopPropagation(); setFlipper('left', true); });
+  leftBtn.addEventListener('pointerup',   (e)=> { e.stopPropagation(); setFlipper('left', false); });
+  leftBtn.addEventListener('pointercancel', (e)=> { e.stopPropagation(); setFlipper('left', false); });
 }
 if (rightBtn) {
-  rightBtn.addEventListener('pointerdown', ()=> setFlipper('right', true));
-  rightBtn.addEventListener('pointerup', ()=> setFlipper('right', false));
-  rightBtn.addEventListener('pointercancel', ()=> setFlipper('right', false));
+  rightBtn.addEventListener('pointerdown', (e)=> { e.stopPropagation(); setFlipper('right', true); });
+  rightBtn.addEventListener('pointerup',   (e)=> { e.stopPropagation(); setFlipper('right', false); });
+  rightBtn.addEventListener('pointercancel', (e)=> { e.stopPropagation(); setFlipper('right', false); });
 }
 
-// Mouse / touch spawn (tap elsewhere) — use raycast onto floorMesh so spawn position is predictable
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  // avoid triggering when clicking UI buttons
-  if (e.target && (e.target.id === 'left-flip' || e.target.id === 'right-flip' || e.target.id === 'spawn' || e.target.id === 'clear')) return;
-  if (gameOver || ballsLeft <= 0 || bodies.length > 0) return; // one ball in play at a time
+// --- Full-Screen Split Multi-Touch Controls (Mobile / Tablet) ---
+// Touching/holding anywhere on the left half of the screen drives the left flipper;
+// touching/holding on the right half drives the right flipper.
+const activeTouches = new Map(); // pointerId -> 'left' | 'right'
 
-  const rect = renderer.domElement.getBoundingClientRect();
-  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(mouse, camera);
-  const intersects = raycaster.intersectObject(floorMesh, true);
-  if (intersects && intersects.length) {
-    const pt = intersects[0].point;
-    spawnBall({ x: pt.x, y: pt.y + 2.0, z: pt.z });
-  } else {
-    // fallback to center spawn
+function updateFlipperTouchState() {
+  let hasLeft = false;
+  let hasRight = false;
+  for (const side of activeTouches.values()) {
+    if (side === 'left') hasLeft = true;
+    if (side === 'right') hasRight = true;
+  }
+  setFlipper('left', hasLeft);
+  setFlipper('right', hasRight);
+}
+
+window.addEventListener('pointerdown', (e) => {
+  // Ignore clicks on UI elements (buttons, inputs, menus, version badge, etc.)
+  const target = e.target;
+  if (target && target.closest('button, input, select, label, summary, details, a, #version, #score, .flip-btn')) return;
+  // Ignore top controls header (top 60px)
+  if (e.clientY < 60) return;
+
+  // If no ball in play, tap anywhere to launch a new ball
+  if (bodies.length === 0 && !gameOver && ballsLeft > 0) {
     spawnAtCenter();
+    return;
+  }
+
+  // Split screen touch
+  const side = e.clientX < window.innerWidth / 2 ? 'left' : 'right';
+  activeTouches.set(e.pointerId, side);
+  updateFlipperTouchState();
+});
+
+window.addEventListener('pointermove', (e) => {
+  if (!activeTouches.has(e.pointerId)) return;
+  const newSide = e.clientX < window.innerWidth / 2 ? 'left' : 'right';
+  if (activeTouches.get(e.pointerId) !== newSide) {
+    activeTouches.set(e.pointerId, newSide);
+    updateFlipperTouchState();
+  }
+});
+
+window.addEventListener('pointerup', (e) => {
+  if (activeTouches.has(e.pointerId)) {
+    activeTouches.delete(e.pointerId);
+    updateFlipperTouchState();
+  }
+});
+
+window.addEventListener('pointercancel', (e) => {
+  if (activeTouches.has(e.pointerId)) {
+    activeTouches.delete(e.pointerId);
+    updateFlipperTouchState();
   }
 });
 
@@ -1045,8 +1091,71 @@ gameOverEl.append(goTitle, goScore, newBtn);
 if (document.body) document.body.appendChild(gameOverEl);
 newBtn.addEventListener('click', newGame);
 
+// --- Ball Saver Protection System ---
+const BALL_SAVER_DURATION = 5000; // 5 seconds of launch protection
+let ballSaverUntil = 0;
+const ballSaverBadge = document.getElementById('ball-saver-badge');
+const ballSaverTimer = document.getElementById('ball-saver-timer');
+const ballSavedBanner = document.getElementById('ball-saved-banner');
+
+function updateBallSaverUI(now) {
+  if (!ballSaverBadge) return;
+  const remaining = ballSaverUntil - now;
+  if (remaining > 0 && bodies.length > 0 && !gameOver) {
+    const sec = Math.ceil(remaining / 1000);
+    ballSaverBadge.style.display = 'inline-flex';
+    if (ballSaverTimer) ballSaverTimer.textContent = `${sec}s`;
+    if (remaining < 2000) {
+      ballSaverBadge.classList.add('pulse');
+    } else {
+      ballSaverBadge.classList.remove('pulse');
+    }
+  } else {
+    ballSaverBadge.style.display = 'none';
+    ballSaverBadge.classList.remove('pulse');
+  }
+}
+
+let ballSavedBannerTimer = 0;
+function showBallSavedBanner() {
+  if (!ballSavedBanner) return;
+  clearTimeout(ballSavedBannerTimer);
+  ballSavedBanner.classList.add('show');
+  ballSavedBannerTimer = setTimeout(() => {
+    ballSavedBanner.classList.remove('show');
+  }, 1400);
+}
+
+function triggerBallSavedEffect() {
+  playPing(750, 0.12);
+  setTimeout(() => playPing(980, 0.18), 90);
+  showBallSavedBanner();
+  triggerScreenFlash(0.2);
+  ballSaverUntil = 0; // consumed on this save
+  updateBallSaverUI(performance.now());
+  setTimeout(() => {
+    if (!gameOver && ballsLeft > 0) {
+      clearBalls();
+      const ki = Math.random() < 0.5 ? 0 : 1;
+      const K = kickers[ki];
+      const body = spawnBall({ x: K.x, y: bedY + 0.4, z: K.z }, kickerLaunchVelocity(K));
+      if (body) { body._kickerAt = {}; body._kickerAt[ki] = performance.now(); }
+      K.flash = 1;
+      spawnSparks(K.x, bedY + 0.2, K.z, 0x00f5d4, 22, 1.3);
+      playPing(300 + Math.random() * 120, 0.1);
+    }
+  }, 400);
+}
+
 function onBallDrained() {
   if (gameOver) return;
+
+  // Ball Saver: save ball and free relaunch if drained within protection time
+  if (performance.now() < ballSaverUntil) {
+    triggerBallSavedEffect();
+    return;
+  }
+
   ballsLeft = Math.max(0, ballsLeft - 1);
   updateBallsUI();
   playPing(150, 0.25); // low "ball lost" tone
@@ -1055,6 +1164,8 @@ function onBallDrained() {
 }
 function endGame() {
   gameOver = true;
+  ballSaverUntil = 0;
+  updateBallSaverUI(performance.now());
   if (score > highScore) { highScore = score; try { localStorage.setItem('PINBALL_HIGH', String(highScore)); } catch (e) {} }
   updateHighUI();
   goScore.innerHTML = `Score ${score} &nbsp;·&nbsp; High ${highScore}<br>Best Combo ×${Math.max(1, maxComboThisGame)}`;
@@ -1069,6 +1180,8 @@ function newGame() {
   nextBonusIdx = 0;
   combo = 0;
   maxComboThisGame = 0;
+  ballSaverUntil = 0;
+  updateBallSaverUI(performance.now());
   updateComboUI(1);
   updateBallsUI();
   gameOverEl.style.display = 'none';
@@ -1091,9 +1204,9 @@ function resolveFlipperBall_V2(f, b) {
   if (!f || !b) return;
 
   const isLeft = f.side === 'left';
-  const Px = isLeft ? -2.6 : 2.6;
+  const Px = isLeft ? -2.65 : 2.65;
   const Pz = tableSize.h / 2 - 0.9; // 5.1
-  const bladeL = 2.4;
+  const bladeL = 2.32;
   const ballR = 0.35;
   const halfThick = 0.225;
   const reach = halfThick + ballR; // 0.575
@@ -1152,18 +1265,36 @@ function resolveFlipperBall_V2(f, b) {
     }
   } else {
     // Static / Held Up / Resting Barrier: Rigid collision constraint with slight bounce
-    if (distN < reach && distN > -(reach * 0.85)) {
-      // Reposition to surface
-      b.position.x = cx + nx * reach;
-      b.position.z = cz + nz * reach;
-      b.position.y = bedY + ballR + 0.005;
+    if (along <= bladeL) {
+      // Normal blade side collision
+      if (distN < reach && distN > -(reach * 0.85)) {
+        b.position.x = cx + nx * reach;
+        b.position.z = cz + nz * reach;
+        b.position.y = bedY + ballR + 0.005;
 
-      // Reflect / cancel penetration velocity
-      const vn = b.velocity.x * nx + b.velocity.z * nz;
-      if (vn < 0) {
-        const bounce = 0.25;
-        b.velocity.x -= (1 + bounce) * vn * nx;
-        b.velocity.z -= (1 + bounce) * vn * nz;
+        const vn = b.velocity.x * nx + b.velocity.z * nz;
+        if (vn < 0) {
+          const bounce = 0.25;
+          b.velocity.x -= (1 + bounce) * vn * nx;
+          b.velocity.z -= (1 + bounce) * vn * nz;
+        }
+      }
+    } else {
+      // Rounded Tip Cap collision (radial push outward from tip allowing smooth roll-off into drain)
+      const distToTip = Math.hypot(diffX, diffZ);
+      if (distToTip < reach && distToTip > 0.001) {
+        const nTipX = diffX / distToTip;
+        const nTipZ = diffZ / distToTip;
+        b.position.x = cx + nTipX * reach;
+        b.position.z = cz + nTipZ * reach;
+        b.position.y = bedY + ballR + 0.005;
+
+        const vnTip = b.velocity.x * nTipX + b.velocity.z * nTipZ;
+        if (vnTip < 0) {
+          const bounce = 0.2;
+          b.velocity.x -= (1 + bounce) * vnTip * nTipX;
+          b.velocity.z -= (1 + bounce) * vnTip * nTipZ;
+        }
       }
     }
   }
@@ -1326,8 +1457,8 @@ function animate(time) {
         removeBallAtIndex(i);
         continue;
       }
-      // ball fell off the bottom (drain) — remove it and lose a ball
-      if (y < -4) {
+      // ball fell off the bottom (drain) — trigger immediately when ball rolls past flippers
+      if (z > 6.2 || y < -2.5) {
         removeBallAtIndex(i);
         onBallDrained();
         continue;
@@ -1385,6 +1516,9 @@ function animate(time) {
     }
     // expire the combo multiplier if no bumper was hit within the window
     if (combo > 0 && performance.now() - lastComboAt > COMBO_WINDOW_MS) { combo = 0; updateComboUI(1); }
+
+    // update Ball Saver indicator
+    updateBallSaverUI(performance.now());
   }
   controls.update();
   renderer.render(scene, camera);
@@ -1392,5 +1526,12 @@ function animate(time) {
 }
 requestAnimationFrame(animate);
 
-// expose some helpers for debugging
-window._pinball = { spawnAtCenter, clearBalls, updateScore };
+// expose some helpers for debugging & testing
+window._pinball = {
+  spawnAtCenter,
+  clearBalls,
+  updateScore,
+  bodies,
+  get ballsLeft() { return ballsLeft; },
+  get ballSaverUntil() { return ballSaverUntil; }
+};

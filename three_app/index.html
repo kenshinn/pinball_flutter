@@ -23,6 +23,15 @@
     .flip-btn:active{background:rgba(255,255,255,0.25);transform:scale(0.95)}
     #notice{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;color:#aaa;font-size:12px;text-align:center;pointer-events:none;z-index:10;white-space:nowrap}
 
+    /* Ball Saver indicator badge */
+    #ball-saver-badge{display:none;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.5px;color:#00f5d4;background:rgba(0,245,212,0.12);border:1px solid rgba(0,245,212,0.4);box-shadow:0 0 12px rgba(0,245,212,0.25);transition:opacity 0.2s, transform 0.2s}
+    #ball-saver-badge.pulse{animation:saverPulse 0.8s infinite alternate}
+    @keyframes saverPulse{from{opacity:0.7;transform:scale(0.96)}to{opacity:1;transform:scale(1.04);box-shadow:0 0 18px rgba(0,245,212,0.5)}}
+
+    /* Ball Saved Popup Banner */
+    #ball-saved-banner{position:fixed;top:42%;left:50%;transform:translate(-50%,-50%) scale(0.6);opacity:0;pointer-events:none;z-index:999999;display:none;padding:16px 32px;border-radius:20px;background:rgba(5,15,25,0.95);border:2px solid #00f5d4;box-shadow:0 0 40px rgba(0,245,212,0.7), inset 0 0 20px rgba(0,245,212,0.4);color:#00f5d4;font-size:28px;font-weight:900;letter-spacing:2px;text-align:center;font-family:system-ui,sans-serif;transition:transform 0.25s cubic-bezier(0.175,0.885,0.32,1.275), opacity 0.25s}
+    #ball-saved-banner.show{display:block !important;opacity:1 !important;transform:translate(-50%,-50%) scale(1) !important}
+
     /* small version badge */
     #version{position:absolute;right:12px;top:12px;font-size:12px;color:#aaa;z-index:30;background:rgba(255,255,255,0.05);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);font-family:monospace;pointer-events:none}
 
@@ -34,6 +43,7 @@
       .flip-btn { min-width:76px; height:62px; font-size:26px; border-radius:16px; background:rgba(255,255,255,0.13) }
       #version { font-size:11px; right:8px; top:8px }
       #notice { font-size:11px; bottom:8px; max-width:48%; white-space:normal }
+      #ball-saved-banner { font-size:20px; padding:10px 20px }
     }
   </style>
 </head>
@@ -41,6 +51,7 @@
   <div id="container"></div>
   <div id="ui">
     <div id="score">Score: 0</div>
+    <div id="ball-saver-badge">🛡️ SAVER <span id="ball-saver-timer">5s</span></div>
     <div id="controls-row" style="display:flex;gap:8px;align-items:center">
       <button id="spawn">Spawn ball</button>
       <button id="clear">Clear balls</button>
@@ -57,16 +68,18 @@
     </div>
   </div>
 
+  <div id="ball-saved-banner">🛡️ BALL SAVED!</div>
+
   <div id="flippers">
     <button id="left-flip" class="flip-btn" aria-label="Left flipper">◀</button>
     <button id="right-flip" class="flip-btn" aria-label="Right flipper">▶</button>
   </div>
 
-  <div id="notice">Flippers: ◀ / ▶ or A / D • Spawn: Space / Click</div>
+  <div id="notice">Flippers: ◀ / ▶, A / D, or Tap Screen Sides</div>
 
   <!-- version badge: update on each publish -->
   <div id="version">v0.1.46</div>
 
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=0.1.46_dev"></script>
 </body>
 </html>
