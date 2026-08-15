@@ -1972,6 +1972,7 @@ function animate(time) {
           f.angularVel = angVel;
           // rotate the kinematic body about the vertical (Y) axis and expose its angular
           // velocity so the physics step imparts momentum to any balls it sweeps.
+          // hinge rotates about the vertical Y axis; keep quaternion generation explicit
           const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), f.angle);
           f.body.quaternion.set(q.x, q.y, q.z, q.w);
           f.body.angularVelocity.set(0, angVel, 0);
