@@ -1800,7 +1800,9 @@ function resolveFlipperBall_V2(f, b) {
 
   // Determine if actively swinging upward (high angular velocity toward up-angle)
   const angVel = f.angularVel || 0;
-  const isActivelySwingingUp = isLeft ? angVel > 1.0 : angVel < -1.0;
+  // Prefer a sign-safe test: check that angular velocity is large AND it's moving toward the upAngle
+  const movingTowardUp = Math.sign((f.upAngle || 0) - (f.prevAngle || 0)) === Math.sign(angVel);
+  const isActivelySwingingUp = movingTowardUp && Math.abs(angVel) > 1.0;
 
   if (isActivelySwingingUp) {
     // Active Swing: Swept volume catch & explosive kick
