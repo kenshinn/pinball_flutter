@@ -1805,6 +1805,8 @@ function resolveFlipperBall_V2(f, b) {
   const diffX = b.position.x - cx;
   const diffZ = b.position.z - cz;
   const distN = diffX * nx + diffZ * nz;
+  // basic per-resolve diagnostics (used by debug overlay)
+  try { f._lastResolve = f._lastResolve || {}; f._lastResolve.along = along; f._lastResolve.tClamped = tClamped; f._lastResolve.distN = distN; f._lastResolve.reach = reach; } catch(e) {}
 
   // Determine if actively swinging upward (high angular velocity toward up-angle)
   function normalizeAngle(a) {
@@ -1861,6 +1863,7 @@ function resolveFlipperBall_V2(f, b) {
       b.velocity.y = 0;
 
       // 3. Effects & Audio scaled to strike power
+      try { f._lastResolve.kicked = true; f._lastResolve.holdRatio = holdRatio; f._lastResolve.tipFactor = tipFactor; f._lastResolve.kickSpeed = kickSpeed; } catch(e) {}
       const sparkCount = Math.floor(10 + holdRatio * 16);
       spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, sparkCount, 0.8 + holdRatio * 0.6);
       playPing(380 + holdRatio * 280 + tipFactor * 160, 0.05 + holdRatio * 0.06);
