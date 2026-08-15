@@ -1340,7 +1340,15 @@ window.addEventListener('pointercancel', (e) => {
 const spawnBtn = document.getElementById('spawn');
 if (spawnBtn) spawnBtn.addEventListener('click', ()=> spawnAtCenter());
 const clearBtn = document.getElementById('clear');
-if (clearBtn) clearBtn.addEventListener('click', ()=> clearBalls());
+if (clearBtn) clearBtn.addEventListener('click', ()=> {
+  if (gameOver) return;
+  if (bodies.length > 0) {
+    ballSaverUntil = 0; // cancel ball saver protection on voluntary clear
+    updateBallSaverUI(performance.now());
+    clearBalls();
+    onBallDrained();
+  }
+});
 const orbitToggle = document.getElementById('orbit');
 if (orbitToggle) {
   orbitToggle.checked = false;
