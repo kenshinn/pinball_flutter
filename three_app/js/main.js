@@ -1776,7 +1776,11 @@ function resolveFlipperBall_V2(f, b) {
   const dx = isLeft ? Math.cos(theta) : -Math.cos(theta);
   const dz = isLeft ? -Math.sin(theta) : Math.sin(theta);
   
-  // Normal pointing up-table (-Z)
+  // Continuous Dynamic Surface Normal (True Timed Flipper Angle):
+  // Upper surface normal is (-sin(theta), -cos(theta)) for both flippers:
+  // - Late hit (near rest angle): shoots Cross-table diagonal (-55° or +55°)
+  // - Mid hit (horizontal blade 0°): shoots Straight Up (0°, -Z)
+  // - Early hit (near up angle): shoots Backhand/Same-side (+50° or -50°)
   const nx = -Math.sin(theta);
   const nz = -Math.cos(theta);
 
@@ -1786,7 +1790,7 @@ function resolveFlipperBall_V2(f, b) {
 
   // Projection along blade (0 to bladeL)
   const along = vx * dx + vz * dz;
-  if (along < -ballR * 0.5 || along > bladeL + ballR * 0.8) return;
+  if (along < -ballR * 0.6 || along > bladeL + ballR * 0.9) return;
   const tClamped = Math.max(0, Math.min(1, along / bladeL));
 
   // Closest point on blade centerline
@@ -1798,32 +1802,33 @@ function resolveFlipperBall_V2(f, b) {
   const diffZ = b.position.z - cz;
   const distN = diffX * nx + diffZ * nz;
 
-  // Determine if actively swinging upward (high angular velocity toward up-angle)
+  // Determine if actively swinging upward:
+  // True if user is pressing flipper within initial sweep window OR angular velocity is moving toward upAngle
   const angVel = f.angularVel || 0;
-  const isActivelySwingingUp = isLeft ? angVel > 1.0 : angVel < -1.0;
+  const holdMs = Math.max(0, performance.now() - (f.pressTime || 0));
+  const isPressingSweep = f.engaged && (holdMs < 120 || (isLeft ? f.angle < f.upAngle - 0.05 : f.angle > f.upAngle + 0.05));
+  const isMovingUp = isLeft ? angVel > 0.5 : angVel < -0.5;
+  const isActivelySwingingUp = isPressingSweep || isMovingUp;
 
   if (isActivelySwingingUp) {
-    // Active Swing: Swept volume catch & explosive kick
-    if (distN < reach + 0.2 && distN > -2.0) {
-      // 1. Project to surface
-      b.position.x = cx + nx * (reach + 0.04);
-      b.position.z = cz + nz * (reach + 0.04);
+    // Active Swing: Swept volume catch & explosive launch (no stickiness, instant ejection)
+    if (distN < reach + 0.35 && distN > -(reach + 0.6)) {
+      // 1. Separate ball immediately away from blade surface
+      b.position.x = cx + nx * (reach + 0.08);
+      b.position.z = cz + nz * (reach + 0.08);
       b.position.y = bedY + ballR + 0.005;
 
       // 2. Progressive kick impulse proportional to hold duration, angular speed & hit radius
-      const holdMs = Math.max(0, performance.now() - (f.pressTime || 0));
       const holdRatio = Math.min(1.0, holdMs / 85.0); // 0.0 (quick tap) ~ 1.0 (firm power press)
       const tipFactor = tClamped;
 
-      // Base kick speed: 10.0~18.0 depending on hold duration + up to 6.0~14.0 at the tip
-      const baseKick = 10.0 + holdRatio * 8.0;
-      const tipBonus = tipFactor * (6.0 + holdRatio * 8.0);
+      // Base kick speed: 12.0~18.0 + tip bonus up to 8.0~18.0
+      const baseKick = 12.0 + holdRatio * 7.0;
+      const tipBonus = tipFactor * (8.0 + holdRatio * 10.0);
       const kickSpeed = baseKick + tipBonus;
 
       // Dynamic tangent preservation:
-      // Short tap preserves more lateral rolling momentum (feathering / soft pass)
-      // Long press forces ball predominantly upward along the normal (power launch)
-      const tangentCoeff = 0.55 - holdRatio * 0.35; // 0.55 -> 0.20
+      const tangentCoeff = 0.45 - holdRatio * 0.25; // 0.45 (soft) -> 0.20 (firm)
       const tangentV = (b.velocity.x * dx + b.velocity.z * dz) * tangentCoeff;
       
       b.velocity.x = nx * kickSpeed + dx * tangentV;
@@ -1831,23 +1836,23 @@ function resolveFlipperBall_V2(f, b) {
       b.velocity.y = 0;
 
       // 3. Effects & Audio scaled to strike power
-      const sparkCount = Math.floor(10 + holdRatio * 16);
-      spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, sparkCount, 0.8 + holdRatio * 0.6);
+      const sparkCount = Math.floor(12 + holdRatio * 16);
+      spawnSparks(b.position.x, bedY + 0.4, b.position.z, isLeft ? 0x00e5ff : 0xffbe0b, sparkCount, 0.9 + holdRatio * 0.6);
       playPing(380 + holdRatio * 280 + tipFactor * 160, 0.05 + holdRatio * 0.06);
       Haptic.vibrate(Math.floor(10 + holdRatio * 16));
     }
   } else {
-    // Static / Held Up / Resting Barrier: Rigid collision constraint with slight bounce
+    // Static / Held Up / Resting Barrier: Pure elastic collision response
     if (along <= bladeL) {
       // Normal blade side collision
       if (distN < reach && distN > -(reach * 0.85)) {
-        b.position.x = cx + nx * reach;
-        b.position.z = cz + nz * reach;
+        b.position.x = cx + nx * (reach + 0.005);
+        b.position.z = cz + nz * (reach + 0.005);
         b.position.y = bedY + ballR + 0.005;
 
         const vn = b.velocity.x * nx + b.velocity.z * nz;
         if (vn < 0) {
-          const bounce = 0.25;
+          const bounce = 0.3;
           b.velocity.x -= (1 + bounce) * vn * nx;
           b.velocity.z -= (1 + bounce) * vn * nz;
         }
@@ -1858,13 +1863,13 @@ function resolveFlipperBall_V2(f, b) {
       if (distToTip < reach && distToTip > 0.001) {
         const nTipX = diffX / distToTip;
         const nTipZ = diffZ / distToTip;
-        b.position.x = cx + nTipX * reach;
-        b.position.z = cz + nTipZ * reach;
+        b.position.x = cx + nTipX * (reach + 0.005);
+        b.position.z = cz + nTipZ * (reach + 0.005);
         b.position.y = bedY + ballR + 0.005;
 
         const vnTip = b.velocity.x * nTipX + b.velocity.z * nTipZ;
         if (vnTip < 0) {
-          const bounce = 0.2;
+          const bounce = 0.25;
           b.velocity.x -= (1 + bounce) * vnTip * nTipX;
           b.velocity.z -= (1 + bounce) * vnTip * nTipZ;
         }

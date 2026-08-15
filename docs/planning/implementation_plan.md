@@ -1,14 +1,15 @@
-# 擋板短按/長按動態力道系統 (Progressive Flipper Physics & Power Scaling)
+# 擋板揮擊時機連續出球角度系統 (Continuous Dynamic Flipper Aiming Physics)
 
-本計畫旨在透過**按壓時間感知（Hold-duration Dynamic Acceleration）**與**可變角速度/衝力權重模型（Progressive Impulse & Tangent Curve）**，徹底解決擋板瞬間衝頂與出球角度死板的問題，實現實體彈珠台經典的「短按輕挑傳球 (Soft Tap / Feathering)」與「長按重砲擊發 (Power Smash)」！
+本計畫旨在引進實體彈珠台真實的**連續接觸面姿態角度模型（Continuous Contact Angle Dynamics）**，使出球方向完全由玩家的**揮擊時機（Timing：早揮 / 中揮 / 晚揮）**與**球體接觸點（Blade Position $t$）**自然決定，具備完整的瞄準扇面（Aim Arc）。
 
 ---
 
 ## User Review Required
 
 > [!IMPORTANT]
-> - **短按 (Quick Tap / Feathering)**：按住時間極短（< 50ms）時，擋板從溫和的角速度（`12 rad/s`）起步，若提早放開會在半行程平滑回彈，擊球力道溫和（`10 ~ 16`），保留球體滾動切線慣性，極度適合細膩微操與雙擋板互傳。
-> - **長按 (Firm Press / Power Smash)**：按住時角速度在 90ms 內迅速加速至極限（`30 rad/s`），全力衝至最大角度，擊球力道暴增（`18 ~ 32`），球如火箭般直衝頂部通道與目標靶位！
+> - **晚揮 (Late Flip / 球在尖端時擊發)**：擋板處於下方靜止傾斜姿態，出球精準飛向**對角線（Cross-table shot，右擋板直衝左上紅色箭頭，左擋板直衝右上）**！
+> - **中揮 (Mid-timing Flip / 擋板轉至水平時擊發)**：出球直衝**正上方（Up the middle，中央黃色 Bumper 與頂部 A-B-C 球道燈）**！
+> - **早揮 (Early Flip / 擋板抬至頂部時擊發)**：出球飛向**同側上方（Backhand shot，右擋板衝右上通道，左擋板衝左上通道）**！
 
 ---
 
@@ -16,29 +17,27 @@
 
 ### [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
 
-#### 1. 擋板按壓時間與角速度動態曲線 (Hold-duration Acceleration)
-- 在 `flipper` 結構中加入 `pressStartTime` 與 `currentSpeed`。
-- `setFlipper(side, true)` 時記錄按下時刻，初始速度由 `12 rad/s` 起步。
-- 在 `animate()` 物理步進中：
-  - 根據 `holdMs = now - f.pressStartTime` 動態計算角速度：
-    $$\text{currentSpeed} = 12.0 + \min(1.0, \frac{\text{holdMs}}{90\text{ms}}) \times 18.0 \quad (12 \to 30\text{ rad/s})$$
-  - 若在揮動過程中放開（`setFlipper(side, false)`），`targetAngle` 立即切回 `restAngle`，擋板能在中途提前回落，實現短按半行程輕挑球。
+#### 1. 連續瞬時表面法線模型 (Continuous Dynamic Surface Normal)
+- 移除前一版絕對值強制鎖死，採用嚴格的旋轉瞬時法線：
+  $$\vec{N} = (-\sin\theta, -\cos\theta)$$
+- 隨擋板旋轉即時角 $\theta(t)$ 動態平滑變化：
+  - **右擋板（Right Flipper，$\theta: +0.58 \to -0.52$）**：
+    - $\theta = +0.58$（晚揮/尖端）：$\vec{N} = (-0.55, -0.83) \implies$ **左上方對角線 (Cross-table)**
+    - $\theta = 0.00$（中揮/水平）：$\vec{N} = (0.00, -1.00) \implies$ **正上方 (Center Up)**
+    - $\theta = -0.52$（早揮/頂部）：$\vec{N} = (+0.50, -0.87) \implies$ **右上方 (Backhand)**
+  - **左擋板（Left Flipper，$\theta: -0.58 \to +0.52$）**：
+    - $\theta = -0.58$（晚揮/尖端）：$\vec{N} = (+0.55, -0.83) \implies$ **右上方對角線 (Cross-table)**
+    - $\theta = 0.00$（中揮/水平）：$\vec{N} = (0.00, -1.00) \implies$ **正上方 (Center Up)**
+    - $\theta = +0.52$（早揮/頂部）：$\vec{N} = (-0.50, -0.87) \implies$ **左上方 (Backhand)**
 
-#### 2. 擊球物理力道動態縮放 (Dynamic Impulse & Variable Angle)
-- 在 `resolveFlipperBall_V2` 中引入 **揮擊角速度權重（Speed Ratio）** 與 **按壓蓄力比例（Hold Ratio）**：
-  - **基礎擊球速度（Kick Speed）**：
-    $$\text{kickSpeed} = (10.0 + \text{holdRatio} \times 8.0) + \text{tipFactor} \times (6.0 + \text{holdRatio} \times 8.0)$$
-  - **出球角度動態變化（Variable Ejection Angle）**：
-    - 短按時提高切線慣性保留比重（`tangentRatio: 0.55`），球沿著擋板斜向輕柔滑出。
-    - 長按時以強大的法線衝力強勢壓向正上方（`tangentRatio: 0.20`），球直衝上層球道。
-
-#### 3. 打擊音效與震動分級回饋
-- 擊球時依據 `holdRatio` 動態調節音效音高（380Hz $\to$ 740Hz）與微震強度（8ms $\to$ 24ms）。
+#### 2. 線速度與切線動量連續加權
+- 結合旋轉線速度 $v_{\text{rot}} = |\omega| \times (t \cdot L)$ 與球體原有切向滾動慣性，讓鋼珠出球角度平滑連貫、極具控球手感與瞄準深度！
 
 ---
 
 ## Verification Plan
 
 ### Manual Verification (在 Chrome / 手機測試)
-1. **短按輕點測試**：極快速輕按 A 或 D（或手機螢幕兩側），觀察擋板動作是否更柔和，球被輕輕挑起、速度較慢、角度偏向側方。
-2. **長按蓄力測試**：按住 A 或 D 不放，觀察擋板全速暴衝至頂角，擊中球時是否發出高亢強擊聲，球猛烈向上噴射。
+1. **晚揮測試**：等球滑至右擋板尖端（下緣）時按下，確認球朝**左上方對角線（紅色箭頭路徑）**飛向 Drop Targets！
+2. **中揮測試**：球在擋板中段、擋板揮至半途時擊中，確認球直衝**正上方中央 Bumper**！
+3. **早揮測試**：球剛進入擋板根部時提早按下，確認球被順勢推向**同側上方（右上）**！
