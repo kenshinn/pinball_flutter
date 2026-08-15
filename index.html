@@ -18,20 +18,32 @@
     #score{font-weight:700;padding:6px 10px;background:rgba(255,255,255,0.06);border-radius:8px}
     button{padding:6px 10px;border-radius:6px;border:0;background:rgba(255,255,255,0.08);color:#fff}
     /* flipper layout: left and right at screen edges */
-    #flippers{position:absolute;left:12px;right:12px;bottom:12px;z-index:20;display:flex;justify-content:space-between;max-width:900px;margin:0 auto;padding:0 12px}
-    .flip-btn{padding:10px 14px;border-radius:10px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.04);color:#fff;-webkit-user-select:none;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-    #notice{position:absolute;left:12px;bottom:12px;color:#ddd;font-size:12px}
+    #flippers{position:absolute;left:12px;right:12px;bottom:12px;z-index:20;display:flex;justify-content:space-between;max-width:900px;margin:0 auto;padding:0 12px;pointer-events:none}
+    .flip-btn{pointer-events:auto;min-width:64px;height:52px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;border-radius:12px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.16);box-shadow:0 4px 14px rgba(0,0,0,0.35);color:#fff;-webkit-user-select:none;user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;transition:transform 0.08s, background 0.08s}
+    .flip-btn:active{background:rgba(255,255,255,0.25);transform:scale(0.95)}
+    #notice{position:absolute;left:50%;transform:translateX(-50%);bottom:16px;color:#aaa;font-size:12px;text-align:center;pointer-events:none;z-index:10;white-space:nowrap}
+
+    /* Ball Saver indicator badge */
+    #ball-saver-badge{display:none;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:700;letter-spacing:0.5px;color:#00f5d4;background:rgba(0,245,212,0.12);border:1px solid rgba(0,245,212,0.4);box-shadow:0 0 12px rgba(0,245,212,0.25);transition:opacity 0.2s, transform 0.2s}
+    #ball-saver-badge.pulse{animation:saverPulse 0.8s infinite alternate}
+    @keyframes saverPulse{from{opacity:0.7;transform:scale(0.96)}to{opacity:1;transform:scale(1.04);box-shadow:0 0 18px rgba(0,245,212,0.5)}}
+
+    /* Ball Saved Popup Banner */
+    #ball-saved-banner{position:fixed;top:42%;left:50%;transform:translate(-50%,-50%) scale(0.6);opacity:0;pointer-events:none;z-index:999999;display:none;padding:16px 32px;border-radius:20px;background:rgba(5,15,25,0.95);border:2px solid #00f5d4;box-shadow:0 0 40px rgba(0,245,212,0.7), inset 0 0 20px rgba(0,245,212,0.4);color:#00f5d4;font-size:28px;font-weight:900;letter-spacing:2px;text-align:center;font-family:system-ui,sans-serif;transition:transform 0.25s cubic-bezier(0.175,0.885,0.32,1.275), opacity 0.25s}
+    #ball-saved-banner.show{display:block !important;opacity:1 !important;transform:translate(-50%,-50%) scale(1) !important}
+
     /* small version badge */
-    #version{position:absolute;right:10px;top:6px;font-size:12px;color:#bbb;z-index:30;background:rgba(255,255,255,0.02);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.03)}
+    #version{position:absolute;right:12px;top:12px;font-size:12px;color:#aaa;z-index:30;background:rgba(255,255,255,0.05);padding:4px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);font-family:monospace;pointer-events:none}
 
     /* Responsive tweaks for narrow/mobile screens */
-    @media (max-width: 520px) {
+    @media (max-width: 600px) {
       #ui { left:8px; right:8px; top:8px; gap:6px }
       #ui > button, #ui > div, #ui > label { font-size:13px }
-      #flippers { left:8px; right:8px; bottom:8px; padding:0 8px }
-      .flip-btn { padding:8px 10px }
-      #version { font-size:11px; right:6px; top:6px }
-      #motion-status, #motion-diagnostics { font-size:11px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+      #flippers { left:8px; right:8px; bottom:10px; padding:0 6px }
+      .flip-btn { min-width:76px; height:62px; font-size:26px; border-radius:16px; background:rgba(255,255,255,0.13) }
+      #version { font-size:11px; right:8px; top:8px }
+      #notice { font-size:11px; bottom:8px; max-width:48%; white-space:normal }
+      #ball-saved-banner { font-size:20px; padding:10px 20px }
     }
   </style>
 </head>
@@ -39,11 +51,13 @@
   <div id="container"></div>
   <div id="ui">
     <div id="score">Score: 0</div>
+    <div id="ball-saver-badge">🛡️ SAVER <span id="ball-saver-timer">5s</span></div>
     <div id="controls-row" style="display:flex;gap:8px;align-items:center">
       <button id="spawn">Spawn ball</button>
       <button id="clear">Clear balls</button>
-      <label style="display:flex;align-items:center;color:#ddd;margin-left:6px"><input id="orbit" type="checkbox" checked style="margin-right:6px">Orbit</label>
-      <details id="more-controls" style="margin-left:8px">
+      <label style="display:flex;align-items:center;color:#ddd;margin-left:6px"><input id="orbit" type="checkbox" style="margin-right:6px">Orbit</label>
+      <label style="display:flex;align-items:center;color:#ddd;margin-left:4px"><input id="haptic-toggle" type="checkbox" checked style="margin-right:4px">📳 Vibrate</label>
+      <details id="more-controls" style="display:none">
         <summary style="cursor:pointer">⋯</summary>
         <div id="more-inner" style="display:flex;gap:8px;align-items:center;margin-top:6px">
           <button id="enable-motion">Enable Motion</button>
@@ -55,16 +69,18 @@
     </div>
   </div>
 
+  <div id="ball-saved-banner">🛡️ BALL SAVED!</div>
+
   <div id="flippers">
     <button id="left-flip" class="flip-btn" aria-label="Left flipper">◀</button>
     <button id="right-flip" class="flip-btn" aria-label="Right flipper">▶</button>
   </div>
 
-  <div id="notice">Click/tap to spawn. On mobile allow motion access to enable tilt.</div>
+  <div id="notice">Flippers: ◀ / ▶, A / D, or Tap Screen Sides</div>
 
   <!-- version badge: update on each publish -->
-  <div id="version">v0.1.35</div>
+  <div id="version">v0.1.51</div>
 
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=0.1.46_p4"></script>
 </body>
 </html>
