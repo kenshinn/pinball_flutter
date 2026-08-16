@@ -1,15 +1,17 @@
-# 擋板揮擊時機連續出球角度系統 (Continuous Dynamic Flipper Aiming Physics)
+# 擋板漸進轉動行程與按壓時間動態角度系統 (Progressive Flipper Stroke Range)
 
-本計畫旨在引進實體彈珠台真實的**連續接觸面姿態角度模型（Continuous Contact Angle Dynamics）**，使出球方向完全由玩家的**揮擊時機（Timing：早揮 / 中揮 / 晚揮）**與**球體接觸點（Blade Position $t$）**自然決定，具備完整的瞄準扇面（Aim Arc）。
+本計畫旨在透過**按壓時間動態決定目標旋轉角度（Hold-duration Dynamic Target Angle）**，解決玩家在右擋板尖端快速點擊時，擋板因轉動過滿（轉過水平線）而容易把球甩進右上角落的問題。
 
 ---
 
 ## User Review Required
 
 > [!IMPORTANT]
-> - **晚揮 (Late Flip / 球在尖端時擊發)**：擋板處於下方靜止傾斜姿態，出球精準飛向**對角線（Cross-table shot，右擋板直衝左上紅色箭頭，左擋板直衝右上）**！
-> - **中揮 (Mid-timing Flip / 擋板轉至水平時擊發)**：出球直衝**正上方（Up the middle，中央黃色 Bumper 與頂部 A-B-C 球道燈）**！
-> - **早揮 (Early Flip / 擋板抬至頂部時擊發)**：出球飛向**同側上方（Backhand shot，右擋板衝右上通道，左擋板衝左上通道）**！
+> - **短按點擊 (Quick Tap / 短按)**：
+>   - 擋板轉動角度被安全限制在**水平附近（$\theta_{tap} \approx \pm 0.06$）**，不再衝滿全行程。
+>   - 擋板擊球表面永遠維持朝向**對角線（右擋板朝左上紅色箭頭，左擋板朝右上）**，尖端打擊 100% 穩定送向對角目標，**絕不會因為輕點一下就甩進右上死角！**
+> - **長按蓄力 (Firm Hold / 長按)**：
+>   - 隨著按住時間（0~100ms）平滑開放最大旋轉行程（$\theta_{full} \approx \mp 0.46$），只有在玩家刻意按住時才會衝滿頂角打出反手高角度球！
 
 ---
 
@@ -17,27 +19,21 @@
 
 ### [three_app/js/main.js](file:///Users/kenshinn_huang/projects/pinball_flutter/three_app/js/main.js)
 
-#### 1. 連續瞬時表面法線模型 (Continuous Dynamic Surface Normal)
-- 移除前一版絕對值強制鎖死，採用嚴格的旋轉瞬時法線：
-  $$\vec{N} = (-\sin\theta, -\cos\theta)$$
-- 隨擋板旋轉即時角 $\theta(t)$ 動態平滑變化：
-  - **右擋板（Right Flipper，$\theta: +0.58 \to -0.52$）**：
-    - $\theta = +0.58$（晚揮/尖端）：$\vec{N} = (-0.55, -0.83) \implies$ **左上方對角線 (Cross-table)**
-    - $\theta = 0.00$（中揮/水平）：$\vec{N} = (0.00, -1.00) \implies$ **正上方 (Center Up)**
-    - $\theta = -0.52$（早揮/頂部）：$\vec{N} = (+0.50, -0.87) \implies$ **右上方 (Backhand)**
-  - **左擋板（Left Flipper，$\theta: -0.58 \to +0.52$）**：
-    - $\theta = -0.58$（晚揮/尖端）：$\vec{N} = (+0.55, -0.83) \implies$ **右上方對角線 (Cross-table)**
-    - $\theta = 0.00$（中揮/水平）：$\vec{N} = (0.00, -1.00) \implies$ **正上方 (Center Up)**
-    - $\theta = +0.52$（早揮/頂部）：$\vec{N} = (-0.50, -0.87) \implies$ **左上方 (Backhand)**
+#### 1. 擋板漸進目標角度 (Dynamic Target Angle)
+- 在 `animate()` 物理迴圈中，當 `f.engaged` 時動態計算 `targetAngle`：
+  $$\text{chargeRatio} = \min(1.0, \frac{\text{holdMs}}{100\text{ms}})$$
+  $$f.targetAngle = \theta_{tap} + \text{chargeRatio} \times (\theta_{full} - \theta_{tap})$$
+  - **右擋板**：$\theta_{rest} = +0.58 \to \theta_{tap} = +0.06 \to \theta_{full} = -0.46$
+  - **左擋板**：$\theta_{rest} = -0.58 \to \theta_{tap} = -0.06 \to \theta_{full} = +0.46$
+- 當放開按鍵時（`!f.engaged`），`targetAngle` 立即切回 `restAngle`，乾脆回彈。
 
-#### 2. 線速度與切線動量連續加權
-- 結合旋轉線速度 $v_{\text{rot}} = |\omega| \times (t \cdot L)$ 與球體原有切向滾動慣性，讓鋼珠出球角度平滑連貫、極具控球手感與瞄準深度！
+#### 2. 擊球法線與衝力自適應
+- 配合動態角度，尖端擊球在短按時將以極度穩定的對角線法線（$nx \approx -0.45 \sim -0.55 < 0$）出球，徹底解決右上偏角問題。
 
 ---
 
 ## Verification Plan
 
 ### Manual Verification (在 Chrome / 手機測試)
-1. **晚揮測試**：等球滑至右擋板尖端（下緣）時按下，確認球朝**左上方對角線（紅色箭頭路徑）**飛向 Drop Targets！
-2. **中揮測試**：球在擋板中段、擋板揮至半途時擊中，確認球直衝**正上方中央 Bumper**！
-3. **早揮測試**：球剛進入擋板根部時提早按下，確認球被順勢推向**同側上方（右上）**！
+1. **短按尖端測試**：球滑至右擋板尖端時快速點擊，觀察擋板是否只轉動至水平附近，球精準沿著對角線（紅色箭頭）飛向左側 Drop Targets 與紅色 Bumper。
+2. **長按蓄力測試**：按住按鍵不放，觀察擋板平滑轉動至最高頂角，打出高推力重砲擊球。

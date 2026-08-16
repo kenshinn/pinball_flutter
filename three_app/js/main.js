@@ -1113,7 +1113,8 @@ function createFlipper(side='left') {
 
   // Rest / engaged angles around the Y axis (radians)
   const restAngle = isLeft ? -0.58 : 0.58;
-  const upAngle   = isLeft ?  0.52 : -0.52;
+  const tapAngle  = isLeft ? -0.06 : 0.06; // short tap stops near horizontal to guarantee diagonal launch
+  const upAngle   = isLeft ?  0.46 : -0.46; // full power hold angle
 
   // apply the rest orientation immediately (body + visual)
   const q0 = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), restAngle);
@@ -1122,10 +1123,10 @@ function createFlipper(side='left') {
 
   const state = {
     body, mesh, side, shapeOffset,
-    restAngle, upAngle,
+    restAngle, tapAngle, upAngle,
     angle: restAngle, targetAngle: restAngle,
-    baseSpeed: 12,    // initial start speed (rad/s) for quick tap
-    maxSpeed: 30,     // full power speed (rad/s) for firm press
+    baseSpeed: 14,    // initial start speed (rad/s) for quick tap
+    maxSpeed: 28,     // full power speed (rad/s) for firm press
     angularSpeed: 24, // current dynamic sweep speed
     pressTime: 0,     // timestamp when flipper was engaged
     engaged: false,
@@ -1240,16 +1241,17 @@ function setFlipper(side, engaged) {
   if (!f) return;
   const wasEngaged = f.engaged;
   f.engaged = !!engaged;
-  f.targetAngle = engaged ? f.upAngle : f.restAngle;
+  f.targetAngle = engaged ? (f.tapAngle || f.upAngle) : f.restAngle;
   if (engaged && !wasEngaged) {
     f.pressTime = performance.now();
-    f.angularSpeed = f.baseSpeed || 12;
+    f.angularSpeed = f.baseSpeed || 14;
     AudioFX.playFlipperClack(side);
     Haptic.flipper();
     shiftLaneLights(side === 'left' ? 'left' : 'right');
   } else if (!engaged && wasEngaged) {
     // Quick snappy release return
     f.angularSpeed = 24;
+    f.targetAngle = f.restAngle;
   }
 }
 
@@ -1958,12 +1960,19 @@ function animate(time) {
           const cur = f.angle;
           const target = f.targetAngle;
 
-          // Dynamic Angular Acceleration based on hold duration:
+          // Progressive Stroke & Angular Acceleration based on hold duration:
           if (f.engaged) {
             const holdMs = Math.max(0, performance.now() - (f.pressTime || 0));
-            const chargeRatio = Math.min(1.0, holdMs / 85.0); // ramp up from baseSpeed to maxSpeed in 85ms
-            f.angularSpeed = (f.baseSpeed || 12) + chargeRatio * ((f.maxSpeed || 30) - (f.baseSpeed || 12));
+            const chargeRatio = Math.min(1.0, holdMs / 100.0); // 0.0 (tap) ~ 1.0 (firm hold in 100ms)
+            f.angularSpeed = (f.baseSpeed || 14) + chargeRatio * ((f.maxSpeed || 28) - (f.baseSpeed || 14));
+
+            // Progressive Dynamic Target Angle:
+            // Short tap stops near horizontal (tapAngle), guaranteeing diagonal shots and preventing overshoot into top corner!
+            // Firm hold smoothly expands the stroke up to full upAngle.
+            const tapAng = f.tapAngle !== undefined ? f.tapAngle : (f.side === 'left' ? -0.06 : 0.06);
+            f.targetAngle = tapAng + chargeRatio * (f.upAngle - tapAng);
           } else {
+            f.targetAngle = f.restAngle;
             f.angularSpeed = 24; // snappy return
           }
 
